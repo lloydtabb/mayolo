@@ -1,0 +1,297 @@
+"use client";
+import { use, useEffect, useState } from "react";
+import Link from "next/link";
+
+type DatasetDetail = {
+  id: string;
+  name: string;
+  sourceUrl: string;
+  status: string;
+  statusError: string | null;
+  sizeBytes: number | null;
+  createdAt: string;
+  readyAt: string | null;
+  workflowRunId: string | null;
+  userSlug: string | null;
+  schema: Array<{ name: string; type: string; nullable: boolean }> | null;
+  sampleRows: Record<string, unknown>[] | null;
+  malloyModel: { source: string; generatedBy: string; compiledAt: string } | null;
+};
+
+const TERMINAL = new Set(["ready", "failed"]);
+
+const STAGE_INFO: Record<string, { label: string; detail: string }> = {
+  pending: {
+    label: "Queued",
+    detail:
+      "Workflow is about to start — usually picks up within a couple seconds.",
+  },
+  ingesting: {
+    label: "Streaming the file into blob storage",
+    detail:
+      "Pulling from the source URL straight into Cloudflare R2. A 50 MiB Parquet finishes in ~10–30s.",
+  },
+  introspecting: {
+    label: "Reading the schema with DuckDB",
+    detail:
+      "Running DESCRIBE and pulling 50 sample rows directly from the Parquet on R2 — no full scan.",
+  },
+  modeling: {
+    label: "Asking Claude to author a Malloy model",
+    detail:
+      "Claude Opus 4.7 sees the schema + samples and writes a Malloy semantic model. Up to 3 retries if it doesn't compile.",
+  },
+  ready: {
+    label: "Ready",
+    detail:
+      "Your dataset is live and queryable through the MCP endpoint below.",
+  },
+  failed: {
+    label: "Failed",
+    detail: "See the error details below.",
+  },
+};
+
+export default function DatasetPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
+  const { id } = use(params);
+  const [data, setData] = useState<DatasetDetail | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function poll() {
+      const res = await fetch(`/api/datasets/${id}`);
+      if (!res.ok) return;
+      const json: DatasetDetail = await res.json();
+      if (cancelled) return;
+      setData(json);
+      if (!TERMINAL.has(json.status)) setTimeout(poll, 1500);
+    }
+    poll();
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
+  if (!data) return <main className="p-8 font-mono text-sm">loading…</main>;
+
+  const stage = STAGE_INFO[data.status] ?? {
+    label: data.status,
+    detail: "",
+  };
+
+  return (
+    <main className="mx-auto max-w-4xl px-6 py-10 font-mono text-sm space-y-6">
+      <header>
+        <Link
+          href="/"
+          className="text-xs text-gray-500 dark:text-gray-400 hover:underline"
+        >
+          ← all datasets
+        </Link>
+        <h1 className="text-xl font-bold mt-2">{data.name}</h1>
+        <p className="text-gray-500 dark:text-gray-400 break-all">
+          {data.sourceUrl}
+        </p>
+      </header>
+
+      <section className="border border-gray-200 dark:border-gray-800 rounded p-4 space-y-2">
+        <div className="flex items-center gap-3">
+          <StatusBadge status={data.status} />
+          <span className="font-semibold">{stage.label}</span>
+        </div>
+        {stage.detail && (
+          <p className="text-gray-600 dark:text-gray-400 text-xs leading-relaxed">
+            {stage.detail}
+          </p>
+        )}
+      </section>
+
+      <section className="grid grid-cols-[140px_1fr] gap-y-1 text-xs">
+        <span className="text-gray-500 dark:text-gray-400">size</span>
+        <span>
+          {data.sizeBytes
+            ? `${(data.sizeBytes / 1024 / 1024).toFixed(2)} MiB`
+            : "—"}
+        </span>
+        <span className="text-gray-500 dark:text-gray-400">workflow</span>
+        <span className="break-all">{data.workflowRunId ?? "—"}</span>
+        <span className="text-gray-500 dark:text-gray-400">created</span>
+        <span>{new Date(data.createdAt).toLocaleString()}</span>
+        <span className="text-gray-500 dark:text-gray-400">ready</span>
+        <span>
+          {data.readyAt ? new Date(data.readyAt).toLocaleString() : "—"}
+        </span>
+      </section>
+
+      {data.statusError && (
+        <section>
+          <h2 className="text-sm font-semibold mb-1">error</h2>
+          <pre className="text-red-700 dark:text-red-300 text-xs whitespace-pre-wrap bg-red-50 dark:bg-red-950/40 p-3 rounded">
+            {data.statusError}
+          </pre>
+        </section>
+      )}
+
+      {data.status === "ready" && data.userSlug && (
+        <McpPanel slug={data.userSlug} datasetName={data.name} />
+      )}
+
+      {data.schema && (
+        <section>
+          <h2 className="text-sm font-semibold mb-1">schema</h2>
+          <div className="border border-gray-200 dark:border-gray-800 rounded overflow-hidden">
+            <table className="w-full text-xs">
+              <thead className="bg-gray-50 dark:bg-gray-900 text-gray-500 dark:text-gray-400">
+                <tr>
+                  <th className="text-left px-3 py-1.5 font-normal">name</th>
+                  <th className="text-left px-3 py-1.5 font-normal">type</th>
+                  <th className="text-left px-3 py-1.5 font-normal">nullable</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.schema.map((c) => (
+                  <tr
+                    key={c.name}
+                    className="border-t border-gray-200 dark:border-gray-800"
+                  >
+                    <td className="px-3 py-1">{c.name}</td>
+                    <td className="px-3 py-1 text-gray-600 dark:text-gray-400">
+                      {c.type}
+                    </td>
+                    <td className="px-3 py-1 text-gray-600 dark:text-gray-400">
+                      {c.nullable ? "yes" : "no"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
+      {data.malloyModel && (
+        <section>
+          <h2 className="text-sm font-semibold mb-1">
+            malloy model{" "}
+            <span className="text-gray-400 dark:text-gray-500 font-normal">
+              (generated by {data.malloyModel.generatedBy})
+            </span>
+          </h2>
+          <pre className="text-xs bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 border border-gray-200 dark:border-gray-800 p-3 rounded overflow-auto whitespace-pre">
+            {data.malloyModel.source}
+          </pre>
+        </section>
+      )}
+    </main>
+  );
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const color =
+    status === "ready"
+      ? "bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300"
+      : status === "failed"
+        ? "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300"
+        : "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300";
+  return (
+    <span className={`inline-block px-2 py-0.5 rounded text-xs ${color}`}>
+      {status}
+    </span>
+  );
+}
+
+function McpPanel({ slug, datasetName }: { slug: string; datasetName: string }) {
+  const [origin, setOrigin] = useState("");
+  useEffect(() => {
+    setOrigin(window.location.origin);
+  }, []);
+  const url = origin ? `${origin}/mcp/${slug}` : `/mcp/${slug}`;
+
+  const claudeConfig = JSON.stringify(
+    {
+      mcpServers: {
+        mayolo: { url },
+      },
+    },
+    null,
+    2,
+  );
+
+  const curlExample = `curl -s -X POST ${url} \\
+  -H 'content-type: application/json' \\
+  -d '{
+    "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+    "params": {
+      "name": "run_analytical_query",
+      "arguments": {
+        "dataset": "${datasetName}",
+        "malloy": "run: ${datasetName} -> { aggregate: row_count is count() }"
+      }
+    }
+  }'`;
+
+  return (
+    <section className="border border-green-300 dark:border-green-800 bg-green-50/50 dark:bg-green-950/20 rounded p-4 space-y-3">
+      <h2 className="text-sm font-semibold">How to use this</h2>
+
+      <div>
+        <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">
+          Your MCP endpoint
+        </div>
+        <Copyable value={url} />
+      </div>
+
+      <div>
+        <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">
+          Add to Claude Desktop ({" "}
+          <code className="text-[10px]">
+            ~/Library/Application Support/Claude/claude_desktop_config.json
+          </code>{" "}
+          )
+        </div>
+        <Copyable value={claudeConfig} multiline />
+      </div>
+
+      <div>
+        <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">
+          Or test from a terminal
+        </div>
+        <Copyable value={curlExample} multiline />
+      </div>
+
+      <div className="text-xs text-gray-500 dark:text-gray-400">
+        Tools available on this endpoint:{" "}
+        <code>list_datasets</code>, <code>describe_semantic_model</code>,{" "}
+        <code>sample_rows</code>, <code>compile_analytical_query</code>,{" "}
+        <code>run_analytical_query</code>.
+      </div>
+    </section>
+  );
+}
+
+function Copyable({ value, multiline }: { value: string; multiline?: boolean }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="relative">
+      <pre
+        className={`text-xs bg-white dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded p-2 overflow-auto ${multiline ? "whitespace-pre" : "whitespace-pre-wrap break-all"}`}
+      >
+        {value}
+      </pre>
+      <button
+        onClick={async () => {
+          await navigator.clipboard.writeText(value);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1200);
+        }}
+        className="absolute top-1.5 right-1.5 text-[10px] px-2 py-0.5 rounded bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700"
+      >
+        {copied ? "copied" : "copy"}
+      </button>
+    </div>
+  );
+}

@@ -1,0 +1,10 @@
+onlyBuiltDependencies:
+  - "@swc/core"
+  - "@duckdb/node-bindings"
+  - esbuild
+  - cbor-extract
+
+ignoredBuiltDependencies:
+  - sharp
+  - unrs-resolver
+  - "@nestjs/core"

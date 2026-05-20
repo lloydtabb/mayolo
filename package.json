@@ -1,0 +1,44 @@
+{
+  "name": "mayolo",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "db:generate": "drizzle-kit generate",
+    "db:push": "drizzle-kit push",
+    "db:studio": "drizzle-kit studio",
+    "e2e": "tsx scripts/e2e.ts"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.76",
+    "@duckdb/node-api": "1.4.4-r.1",
+    "@malloydata/db-duckdb": "^0.0.393",
+    "@malloydata/malloy": "^0.0.393",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "ai": "^6.0.177",
+    "drizzle-orm": "^0.45.2",
+    "nanoid": "^5.1.11",
+    "next": "16.2.6",
+    "postgres": "^3.4.9",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "unique-names-generator": "^4.7.1",
+    "workflow": "^4.2.4",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "drizzle-kit": "^0.31.10",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.6",
+    "tailwindcss": "^4",
+    "tsx": "^4.21.0",
+    "typescript": "^5"
+  }
+}
