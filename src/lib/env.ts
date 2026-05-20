@@ -20,4 +20,7 @@ export const env = {
   get APP_BASE_URL() {
     return process.env.APP_BASE_URL ?? "http://localhost:3000";
   },
+  get APP_SECRET() {
+    return required("APP_SECRET");
+  },
 };
