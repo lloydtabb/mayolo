@@ -6,7 +6,7 @@ const COOKIE = "mayolo_auth";
 // Paths that bypass auth entirely.
 const PUBLIC = ["/login", "/api/auth/login", "/_next", "/favicon.ico"];
 
-export function middleware(req: NextRequest) {
+export function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
   // MCP endpoints are authenticated by the unguessable user slug.
