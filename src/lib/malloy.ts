@@ -39,16 +39,20 @@ export type RunResult = {
   rowCount: number;
 };
 
+// Malloy's default rowLimit is 10 — far too small for analytical queries.
+const DEFAULT_ROW_LIMIT = 10_000;
+
 export async function runMalloy(
   modelSource: string,
   query: string,
+  opts: { rowLimit?: number } = {},
 ): Promise<RunResult> {
   const conn = makeConnection();
   try {
     const runtime = new malloy.SingleConnectionRuntime({ connection: conn });
     const runner = runtime.loadQuery(`${modelSource}\n${query}`);
     const sql = await runner.getSQL();
-    const result = await runner.run();
+    const result = await runner.run({ rowLimit: opts.rowLimit ?? DEFAULT_ROW_LIMIT });
     const rows = result.data.toJSON() as Record<string, unknown>[];
     return { sql, rows, rowCount: rows.length };
   } finally {

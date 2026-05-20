@@ -1,6 +1,9 @@
 import { generateText } from "ai";
-import { anthropic } from "@ai-sdk/anthropic";
+import { createAnthropic } from "@ai-sdk/anthropic";
+import { env } from "./env";
 import type { ColumnInfo } from "./duckdb";
+
+const anthropic = createAnthropic({ apiKey: env.AI_GATEWAY_API_KEY });
 
 // NOTE: this is a JS template literal, so every backtick must be escaped.
 // To keep it readable we avoid backticks entirely inside the prompt body —

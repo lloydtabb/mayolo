@@ -2,7 +2,7 @@ import { db, datasets, malloyModels } from "@/db";
 import { eq } from "drizzle-orm";
 import { FatalError } from "workflow";
 import { setDatasetStatus, getDataset } from "@/lib/datasets";
-import { createTableFromUrl, describeTable, sampleTable, mdRef, type ColumnInfo } from "@/lib/duckdb";
+import { createTableFromUrl, describeTable, sampleTable, mdMalloyRef, type ColumnInfo } from "@/lib/duckdb";
 import { authorMalloyModel } from "@/lib/claude";
 import { compileMalloy } from "@/lib/malloy";
 
@@ -57,7 +57,7 @@ async function modelStep(datasetId: string) {
   }
   await setDatasetStatus(datasetId, "modeling");
 
-  const tableRef = mdRef(ds.mdTable);
+  const tableRef = mdMalloyRef(ds.mdTable);
   const probe = `run: ${ds.name} -> { aggregate: __probe is count() }`;
   const MAX_ATTEMPTS = 3;
   let previous: { source: string; compileError: string } | undefined;

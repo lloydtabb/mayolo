@@ -11,18 +11,9 @@ function esc(s: string): string {
 async function ensureInstance(): Promise<DuckDBInstance> {
   if (_instance) return _instance;
   _setupLock ??= (async () => {
-    const inst = await DuckDBInstance.create(":memory:");
-    const c = await inst.connect();
-    try {
-      // /tmp is the only writable path in serverless runtimes (no $HOME).
-      await c.run(`SET home_directory='/tmp';`);
-      await c.run(`SET motherduck_token='${esc(env.MOTHERDUCK_TOKEN)}';`);
-      await c.run(`INSTALL motherduck;`);
-      await c.run(`LOAD motherduck;`);
-      await c.run(`CREATE DATABASE IF NOT EXISTS "${esc(env.MOTHERDUCK_DATABASE)}";`);
-    } finally {
-      c.closeSync();
-    }
+    // MOTHERDUCK_TOKEN is already in process.env via dotenv-cli / Vercel env.
+    // MotherDuck extension reads it at attach time — no manual SET needed.
+    const inst = await DuckDBInstance.create(`md:${env.MOTHERDUCK_DATABASE}`);
     _instance = inst;
     return inst;
   })().catch((e) => {
@@ -37,9 +28,15 @@ export async function connect(): Promise<DuckDBConnection> {
   return inst.connect();
 }
 
-// Fully-qualified MotherDuck table reference.
+// Table reference — schema-qualified since we connect to md:database directly.
+// Malloy model sources still use the three-part form: database.main.table.
 export function mdRef(tableName: string): string {
-  return `"${env.MOTHERDUCK_DATABASE}".main."${tableName}"`;
+  return `main."${tableName}"`;
+}
+
+// Three-part reference for use in Malloy model source strings.
+export function mdMalloyRef(tableName: string): string {
+  return `${env.MOTHERDUCK_DATABASE}.main.${tableName}`;
 }
 
 export type ColumnInfo = {

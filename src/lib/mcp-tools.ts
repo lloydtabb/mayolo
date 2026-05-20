@@ -62,7 +62,7 @@ export const TOOL_DESCRIPTORS: ToolDescriptor[] = [
   {
     name: "run_analytical_query",
     description:
-      "Execute a Malloy query against the dataset and return the rows. Capped at 1000 rows.",
+      "Execute a Malloy query against the dataset and return the rows. Default row cap is 10000; pass a smaller `max_rows` if you want to bound the response.",
     inputSchema: {
       type: "object",
       properties: {
@@ -71,6 +71,13 @@ export const TOOL_DESCRIPTORS: ToolDescriptor[] = [
           type: "string",
           description:
             "Malloy query starting with `run:` that references the dataset's source.",
+        },
+        max_rows: {
+          type: "integer",
+          minimum: 1,
+          maximum: 10000,
+          description:
+            "Maximum rows to return (default 10000). The result is truncated server-side at this value; `truncated: true` indicates more rows are available.",
         },
       },
       required: ["dataset", "malloy"],
@@ -186,6 +193,7 @@ export async function callTool(
     case "run_analytical_query": {
       const dsName = String(args.dataset ?? "");
       const malloyQ = String(args.malloy ?? "");
+      const maxRows = Math.max(1, Math.min(10000, Number(args.max_rows ?? 10000)));
       const ds = await findDataset(user.id, dsName);
       if (!ds) return errText(`dataset '${dsName}' not found`);
       if (ds.status !== "ready") return errText(`dataset '${dsName}' is ${ds.status}, not ready`);
@@ -193,9 +201,9 @@ export async function callTool(
       if (!model) return errText(`dataset '${dsName}' has no Malloy model`);
       const t0 = Date.now();
       try {
-        const res = await runMalloy(model.source, malloyQ);
+        const res = await runMalloy(model.source, malloyQ, { rowLimit: maxRows });
         const durationMs = Date.now() - t0;
-        const capped = res.rows.slice(0, 1000);
+        const capped = res.rows.slice(0, maxRows);
         await db.insert(queries).values({
           datasetId: ds.id,
           malloySource: malloyQ,
