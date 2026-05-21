@@ -11,9 +11,12 @@ function esc(s: string): string {
 async function ensureInstance(): Promise<DuckDBInstance> {
   if (_instance) return _instance;
   _setupLock ??= (async () => {
-    // MOTHERDUCK_TOKEN is already in process.env via dotenv-cli / Vercel env.
-    // MotherDuck extension reads it at attach time — no manual SET needed.
-    const inst = await DuckDBInstance.create(`md:${env.MOTHERDUCK_DATABASE}`);
+    // home_directory must be set as an instance option — there's no opportunity
+    // to run SET before MotherDuck loads when using the md: path. Vercel and
+    // Lambda have no $HOME so this would otherwise error at extension load time.
+    const inst = await DuckDBInstance.create(`md:${env.MOTHERDUCK_DATABASE}`, {
+      home_directory: "/tmp",
+    });
     _instance = inst;
     return inst;
   })().catch((e) => {
