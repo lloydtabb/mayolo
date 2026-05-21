@@ -91,10 +91,19 @@ async function modelStep(datasetId: string) {
     );
   }
 
-  // Permanent — don't burn workflow retries re-rolling the same dice.
-  throw new FatalError(
-    `Malloy authoring failed after ${MAX_ATTEMPTS} attempts. Last compile error:\n${lastError}\n\n--- last source ---\n${lastSource}`,
-  );
+  // Save the last attempt with the error as a comment so the user can
+  // fix it in the editor rather than losing all of Claude's work.
+  const errorComment = lastError
+    .split("\n")
+    .map((l) => `-- ${l}`)
+    .join("\n");
+  await db.insert(malloyModels).values({
+    datasetId,
+    source: `-- ⚠ Auto-generated model failed to compile — edit and save to fix.\n${errorComment}\n\n${lastSource}`,
+    generatedBy: `claude (compile failed after ${MAX_ATTEMPTS} attempts)`,
+    compiledAt: null,
+    compileError: lastError,
+  });
 }
 
 async function finishStep(datasetId: string) {
