@@ -11,12 +11,20 @@ function esc(s: string): string {
 async function ensureInstance(): Promise<DuckDBInstance> {
   if (_instance) return _instance;
   _setupLock ??= (async () => {
-    // home_directory must be set as an instance option — there's no opportunity
-    // to run SET before MotherDuck loads when using the md: path. Vercel and
-    // Lambda have no $HOME so this would otherwise error at extension load time.
-    const inst = await DuckDBInstance.create(`md:${env.MOTHERDUCK_DATABASE}`, {
-      home_directory: "/tmp",
-    });
+    // Set token in env so MotherDuck extension picks it up at LOAD time.
+    process.env["motherduck_token"] = env.MOTHERDUCK_TOKEN;
+    // Use :memory: so we can SET home_directory via SQL before MotherDuck
+    // loads — the md: path auto-loads the extension before we get a chance
+    // to SET home_directory, which fails on Vercel/Lambda (no $HOME).
+    const inst = await DuckDBInstance.create(":memory:");
+    const c = await inst.connect();
+    try {
+      await c.run(`SET home_directory='/tmp';`);
+      await c.run(`INSTALL motherduck;`);
+      await c.run(`LOAD motherduck;`);
+    } finally {
+      c.closeSync();
+    }
     _instance = inst;
     return inst;
   })().catch((e) => {
@@ -31,10 +39,9 @@ export async function connect(): Promise<DuckDBConnection> {
   return inst.connect();
 }
 
-// Table reference — schema-qualified since we connect to md:database directly.
-// Malloy model sources still use the three-part form: database.main.table.
+// Fully-qualified MotherDuck table reference for raw SQL queries.
 export function mdRef(tableName: string): string {
-  return `main."${tableName}"`;
+  return `"${env.MOTHERDUCK_DATABASE}".main."${tableName}"`;
 }
 
 // Three-part reference for use in Malloy model source strings.
