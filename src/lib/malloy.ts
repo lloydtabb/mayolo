@@ -3,6 +3,9 @@ import { DuckDBConnection as MalloyDuckDBConnection } from "@malloydata/db-duckd
 import { env } from "./env";
 
 function makeConnection(): MalloyDuckDBConnection {
+  // Same home_directory fix as duckdb.ts — cached MotherDuck extension
+  // can autoload before setupSQL runs if $HOME is unset (Vercel/Lambda).
+  process.env["HOME"] = process.env["HOME"] || "/tmp";
   return new MalloyDuckDBConnection({
     name: "duckdb",
     databasePath: "md:",
