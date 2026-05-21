@@ -10,7 +10,7 @@ export async function POST(req: Request) {
   }
 
   const res = NextResponse.json({ ok: true });
-  res.cookies.set("mayolo_auth", env.APP_SECRET, {
+  res.cookies.set("malloyyo_auth", env.APP_SECRET, {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",

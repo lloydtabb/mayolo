@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "mayolo",
-  description: "Point at a Parquet file, get a Malloy MCP endpoint.",
+  title: "malloyyo",
+  description: "Point at a dataset URL, get a Malloy MCP endpoint.",
 };
 
 export default function RootLayout({

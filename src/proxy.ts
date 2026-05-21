@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-const COOKIE = "mayolo_auth";
+const COOKIE = "malloyyo_auth";
 
 // Paths that bypass auth entirely.
 const PUBLIC = ["/login", "/api/auth/login", "/_next", "/favicon.ico"];

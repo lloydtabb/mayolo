@@ -29,7 +29,7 @@ export default function LoginPage() {
   return (
     <main className="min-h-screen flex items-center justify-center font-mono text-sm">
       <form onSubmit={submit} className="space-y-4 w-full max-w-xs">
-        <h1 className="text-xl font-bold">mayolo</h1>
+        <h1 className="text-xl font-bold">malloyyo</h1>
         <label className="block">
           <span className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
             secret

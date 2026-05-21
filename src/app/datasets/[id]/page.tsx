@@ -342,7 +342,7 @@ function McpPanel({ slug, datasetName }: { slug: string; datasetName: string }) 
   const claudeConfig = JSON.stringify(
     {
       mcpServers: {
-        mayolo: { url },
+        malloyyo: { url },
       },
     },
     null,

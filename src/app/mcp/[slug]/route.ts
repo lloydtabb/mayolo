@@ -20,7 +20,7 @@ function err(id: string | number | null | undefined, code: number, message: stri
 }
 
 const PROTOCOL_VERSION = "2025-03-26";
-const SERVER_INFO = { name: "mayolo", version: "0.1.0" };
+const SERVER_INFO = { name: "malloyyo", version: "0.1.0" };
 
 export async function POST(
   req: Request,

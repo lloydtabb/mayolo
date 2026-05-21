@@ -59,9 +59,9 @@ export default function HomePage() {
   return (
     <main className="mx-auto max-w-2xl px-6 py-16 font-mono text-sm space-y-10">
       <header>
-        <h1 className="text-2xl font-bold mb-2">mayolo</h1>
+        <h1 className="text-2xl font-bold mb-2">malloyyo</h1>
         <p className="text-gray-500 dark:text-gray-400 leading-relaxed">
-          Point at a Parquet file. We pull it into blob storage, ask DuckDB
+          Point at a dataset URL. We load it into MotherDuck, ask DuckDB
           for the schema, then have Claude write a Malloy semantic model. You
           get a personal MCP endpoint that any LLM can use to ask analytical
           questions of the data.
