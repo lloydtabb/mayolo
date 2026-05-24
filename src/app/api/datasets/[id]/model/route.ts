@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { desc, eq } from "drizzle-orm";
 import { db, datasets, malloyModels } from "@/db";
-import { getDefaultUser } from "@/lib/user";
+import { getSessionUser, UnauthorizedError } from "@/lib/user";
 import { compileMalloy } from "@/lib/malloy";
 
 export const runtime = "nodejs";
@@ -13,7 +13,11 @@ export async function POST(
   req: Request,
   ctx: RouteContext<"/api/datasets/[id]/model">,
 ) {
-  const me = await getDefaultUser();
+  let me;
+  try { me = await getSessionUser(); } catch (err) {
+    if (err instanceof UnauthorizedError) return NextResponse.json({ error: "sign in required" }, { status: 401 });
+    throw err;
+  }
   const { id } = await ctx.params;
   const { source } = Body.parse(await req.json());
   const [ds] = await db.select().from(datasets).where(eq(datasets.id, id));

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db, datasets, malloyModels, users } from "@/db";
+import { getSessionUser, UnauthorizedError } from "@/lib/user";
 
 export const runtime = "nodejs";
 
@@ -8,9 +9,15 @@ export async function GET(
   _req: Request,
   ctx: RouteContext<"/api/datasets/[id]">,
 ) {
+  let me;
+  try { me = await getSessionUser(); } catch (err) {
+    if (err instanceof UnauthorizedError) return NextResponse.json({ error: "sign in required" }, { status: 401 });
+    throw err;
+  }
+
   const { id } = await ctx.params;
   const [ds] = await db.select().from(datasets).where(eq(datasets.id, id));
-  if (!ds) return NextResponse.json({ error: "not found" }, { status: 404 });
+  if (!ds || ds.userId !== me.id) return NextResponse.json({ error: "not found" }, { status: 404 });
 
   const [user] = await db.select().from(users).where(eq(users.id, ds.userId));
 

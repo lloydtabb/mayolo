@@ -2,6 +2,14 @@ import type { NextConfig } from "next";
 import { withWorkflow } from "workflow/next";
 
 const nextConfig: NextConfig = {
+  // App Router skips dotted path segments, so /.well-known/* routes need
+  // rewrites to reach API routes.
+  async rewrites() {
+    return [
+      { source: "/.well-known/oauth-authorization-server", destination: "/api/oauth/discovery/authorization-server" },
+      { source: "/.well-known/oauth-protected-resource", destination: "/api/oauth/discovery/protected-resource" },
+    ];
+  },
   // Only the native-binding packages need to stay external. Everything else
   // (Malloy, AI SDK, AWS SDK) can be bundled and tree-shaken — including
   // them as `serverExternalPackages` was forcing the entire node_modules

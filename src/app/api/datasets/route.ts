@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { eq, desc } from "drizzle-orm";
 import { db, datasets } from "@/db";
-import { getDefaultUser } from "@/lib/user";
+import { getSessionUser, UnauthorizedError } from "@/lib/user";
 import { nameToSlug } from "@/lib/slug";
 import { start } from "workflow/api";
 import { ingestDataset } from "@/workflows/ingest";
@@ -25,8 +25,12 @@ function deriveNameFromUrl(url: string): string {
 }
 
 export async function POST(req: Request) {
+  let user;
+  try { user = await getSessionUser(); } catch (err) {
+    if (err instanceof UnauthorizedError) return NextResponse.json({ error: "sign in required" }, { status: 401 });
+    throw err;
+  }
   const body = Body.parse(await req.json());
-  const user = await getDefaultUser();
   const name = nameToSlug(body.name ?? deriveNameFromUrl(body.sourceUrl));
   const id = crypto.randomUUID();
   const mdTable = `${name}_${id.slice(0, 8)}`;
@@ -61,6 +65,11 @@ export async function POST(req: Request) {
 }
 
 export async function GET() {
+  let user;
+  try { user = await getSessionUser(); } catch (err) {
+    if (err instanceof UnauthorizedError) return NextResponse.json([]);
+    throw err;
+  }
   const rows = await db
     .select({
       id: datasets.id,
@@ -73,6 +82,7 @@ export async function GET() {
       readyAt: datasets.readyAt,
     })
     .from(datasets)
+    .where(eq(datasets.userId, user.id))
     .orderBy(desc(datasets.createdAt))
     .limit(50);
   return NextResponse.json(rows);

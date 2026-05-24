@@ -4,7 +4,15 @@ import type { NextRequest } from "next/server";
 const COOKIE = "malloyyo_auth";
 
 // Paths that bypass auth entirely.
-const PUBLIC = ["/login", "/api/auth/login", "/_next", "/favicon.ico"];
+const PUBLIC = [
+  "/login",
+  "/api/auth",        // next-auth (sign-in, callback, etc.)
+  "/api/oauth",       // OAuth server endpoints
+  "/.well-known",     // OAuth discovery
+  "/_next",
+  "/favicon.ico",
+  "/oauth/consent",   // consent page (auth checked inside)
+];
 
 export function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;

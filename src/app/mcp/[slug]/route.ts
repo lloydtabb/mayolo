@@ -1,5 +1,7 @@
 import { getUserBySlug } from "@/lib/getUserBySlug";
 import { TOOL_DESCRIPTORS, callTool } from "@/lib/mcp-tools";
+import { recordAccessTokenUse, validateAccessToken } from "@/lib/oauth/tokens";
+import { corsPreflight, withCors } from "@/lib/oauth/cors";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,33 +14,59 @@ type JsonRpcReq = {
 };
 
 function ok(id: string | number | null | undefined, result: unknown) {
-  return Response.json({ jsonrpc: "2.0", id: id ?? null, result });
+  return withCors(Response.json({ jsonrpc: "2.0", id: id ?? null, result }));
 }
 
 function err(id: string | number | null | undefined, code: number, message: string) {
-  return Response.json({ jsonrpc: "2.0", id: id ?? null, error: { code, message } });
+  return withCors(Response.json({ jsonrpc: "2.0", id: id ?? null, error: { code, message } }));
+}
+
+function unauthorized(description: string, request: Request): Response {
+  const origin = new URL(request.url).origin;
+  const safe = description.replace(/[^\x20-\x7E]/g, " ").replace(/"/g, "'");
+  return withCors(
+    new Response(JSON.stringify({ error: "invalid_token", error_description: description }), {
+      status: 401,
+      headers: {
+        "Content-Type": "application/json",
+        "WWW-Authenticate":
+          `Bearer error="invalid_token", error_description="${safe}", ` +
+          `resource_metadata="${origin}/.well-known/oauth-protected-resource"`,
+      },
+    }),
+  );
 }
 
 const PROTOCOL_VERSION = "2025-03-26";
 const SERVER_INFO = { name: "malloyyo", version: "0.1.0" };
 
-export async function POST(
-  req: Request,
-  ctx: RouteContext<"/mcp/[slug]">,
-) {
+export async function POST(req: Request, ctx: RouteContext<"/mcp/[slug]">) {
   const { slug } = await ctx.params;
   const user = await getUserBySlug(slug);
-  if (!user) return Response.json({ error: "invalid slug" }, { status: 404 });
+  if (!user) return withCors(Response.json({ error: "invalid slug" }, { status: 404 }));
+
+  const authHeader = req.headers.get("authorization");
+  if (!authHeader || !authHeader.toLowerCase().startsWith("bearer ")) {
+    return unauthorized("Missing Bearer token. OAuth against this server to obtain one.", req);
+  }
+  const raw = authHeader.slice(7).trim();
+  const validated = await validateAccessToken(raw);
+  if (!validated.ok) return unauthorized("Invalid or revoked token", req);
+  if (validated.userId !== user.id) {
+    return withCors(new Response(
+      JSON.stringify({ error: "forbidden", error_description: "Token does not match this endpoint's owner." }),
+      { status: 403, headers: { "Content-Type": "application/json" } },
+    ));
+  }
+
+  // Fire-and-forget last_used_at update.
+  void recordAccessTokenUse(validated.tokenHash);
 
   let body: JsonRpcReq;
-  try {
-    body = (await req.json()) as JsonRpcReq;
-  } catch {
-    return Response.json({ error: "invalid JSON" }, { status: 400 });
+  try { body = (await req.json()) as JsonRpcReq; } catch {
+    return withCors(Response.json({ error: "invalid JSON" }, { status: 400 }));
   }
-  if (body.jsonrpc !== "2.0" || !body.method) {
-    return err(body.id, -32600, "invalid JSON-RPC envelope");
-  }
+  if (body.jsonrpc !== "2.0" || !body.method) return err(body.id, -32600, "invalid JSON-RPC envelope");
 
   switch (body.method) {
     case "initialize":
@@ -49,8 +77,7 @@ export async function POST(
       });
 
     case "notifications/initialized":
-      // notification, no response body expected; return 202 No Content
-      return new Response(null, { status: 202 });
+      return withCors(new Response(null, { status: 202 }));
 
     case "tools/list":
       return ok(body.id, { tools: TOOL_DESCRIPTORS });
@@ -75,9 +102,11 @@ export async function POST(
   }
 }
 
+export async function OPTIONS() { return corsPreflight(); }
+
 export async function GET() {
-  return new Response(
+  return withCors(new Response(
     "POST JSON-RPC requests to this URL. See https://modelcontextprotocol.io",
     { status: 200 },
-  );
+  ));
 }
