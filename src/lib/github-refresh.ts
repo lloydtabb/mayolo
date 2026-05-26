@@ -1,10 +1,10 @@
 import { desc, eq } from "drizzle-orm";
 import { db, datasets, malloyModels, malloyModelFiles } from "@/db";
 import { GitHubURLReader, parseGitHubRepo } from "./github";
-import { introspectModelWithReader } from "./malloy";
+import { introspectModelWithReader, type SourceInfo } from "./malloy";
 
 export type RefreshResult =
-  | { ok: true; version: number; generatedBy: string; compiledAt: Date | null; sources: string[]; fileCount: number }
+  | { ok: true; version: number; generatedBy: string; compiledAt: Date | null; sources: SourceInfo[]; fileCount: number }
   | { ok: false; error: string };
 
 export async function refreshGitHubModel(datasetId: string): Promise<RefreshResult> {

@@ -1,5 +1,6 @@
 import { eq, and, desc, or } from "drizzle-orm";
 import { db, datasets, malloyModels, malloyModelFiles, queries, type User } from "@/db";
+import type { SourceInfo } from "./malloy";
 import { compileMalloy, runMalloy, compileMalloyFiles, runMalloyFiles } from "./malloy";
 import { sampleTable } from "./duckdb";
 
@@ -11,66 +12,64 @@ export type ToolDescriptor = {
 
 export const TOOL_DESCRIPTORS: ToolDescriptor[] = [
   {
-    name: "list_datasets",
+    name: "list_sources",
     description:
-      "List all datasets available to this MCP endpoint. Returns each dataset's name, status, source URL, and row schema summary.",
+      "List all queryable Malloy sources available on this MCP endpoint. Each source is a named entity you can run analytical queries against. Multiple sources may come from the same semantic model.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   {
     name: "describe_semantic_model",
     description:
-      "Return the Malloy semantic model (source declarations, measures, dimensions) for the named dataset. Use this first to learn what queries are possible.",
+      "Return the Malloy semantic model (source declarations, measures, dimensions) for the named source. Use this first to learn what queries are possible.",
     inputSchema: {
       type: "object",
-      properties: { dataset: { type: "string" } },
-      required: ["dataset"],
+      properties: { source: { type: "string" } },
+      required: ["source"],
       additionalProperties: false,
     },
   },
   {
     name: "sample_rows",
     description:
-      "Return up to N (default 20, max 200) raw sample rows from the dataset's underlying Parquet. Useful for quickly inspecting values before writing a Malloy query.",
+      "Return up to N (default 20, max 200) raw sample rows from the source's underlying table. Useful for quickly inspecting values before writing a Malloy query.",
     inputSchema: {
       type: "object",
       properties: {
-        dataset: { type: "string" },
+        source: { type: "string" },
         n: { type: "integer", minimum: 1, maximum: 200 },
       },
-      required: ["dataset"],
+      required: ["source"],
       additionalProperties: false,
     },
   },
   {
     name: "compile_analytical_query",
     description:
-      "Compile a Malloy query against the dataset's semantic model and return the generated SQL, without executing. Use this to validate syntax cheaply.",
+      "Compile a Malloy query against the source's semantic model and return the generated SQL, without executing. Use this to validate syntax cheaply.",
     inputSchema: {
       type: "object",
       properties: {
-        dataset: { type: "string" },
+        source: { type: "string" },
         malloy: {
           type: "string",
-          description:
-            "Malloy query starting with `run:` that references the dataset's source.",
+          description: "Malloy query starting with `run:` that references the source name.",
         },
       },
-      required: ["dataset", "malloy"],
+      required: ["source", "malloy"],
       additionalProperties: false,
     },
   },
   {
     name: "run_analytical_query",
     description:
-      "Execute a Malloy query against the dataset and return the rows. Default row cap is 10000; pass a smaller `max_rows` if you want to bound the response.",
+      "Execute a Malloy query against the source and return the rows. Default row cap is 10000; pass a smaller `max_rows` if you want to bound the response.",
     inputSchema: {
       type: "object",
       properties: {
-        dataset: { type: "string" },
+        source: { type: "string" },
         malloy: {
           type: "string",
-          description:
-            "Malloy query starting with `run:` that references the dataset's source.",
+          description: "Malloy query starting with `run:` that references the source name.",
         },
         max_rows: {
           type: "integer",
@@ -80,36 +79,70 @@ export const TOOL_DESCRIPTORS: ToolDescriptor[] = [
             "Maximum rows to return (default 10000). The result is truncated server-side at this value; `truncated: true` indicates more rows are available.",
         },
       },
-      required: ["dataset", "malloy"],
+      required: ["source", "malloy"],
       additionalProperties: false,
     },
   },
 ];
 
-async function listUserDatasets(userId: string) {
-  return db
-    .select({
-      id: datasets.id,
-      name: datasets.name,
-      status: datasets.status,
-      sourceUrl: datasets.sourceUrl,
-      rowCount: datasets.rowCount,
-      schemaJson: datasets.schemaJson,
-      readyAt: datasets.readyAt,
-    })
-    .from(datasets)
-    .where(or(eq(datasets.userId, userId), eq(datasets.isPublic, true)));
+// Normalize DB sources column — legacy string[] or new {name, description?}[] format.
+function normalizeSources(raw: unknown): SourceInfo[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((s) =>
+    typeof s === "string" ? { name: s, description: null } : { name: String(s.name), description: s.description ?? null }
+  );
 }
 
-async function findDataset(userId: string, name: string) {
-  // Prefer the latest 'ready' dataset for this name; fall back to the
-  // latest of any status (so failure messages are informative).
-  const rows = await db
+// Flat list of all sources across all ready models accessible to this user.
+async function listAllSources(userId: string) {
+  const dsList = await db
+    .select({ id: datasets.id, name: datasets.name, rowCount: datasets.rowCount })
+    .from(datasets)
+    .where(and(
+      or(eq(datasets.userId, userId), eq(datasets.isPublic, true)),
+      eq(datasets.status, "ready"),
+    ));
+
+  const result: Array<{ source: string; model: string; description?: string | null; row_count?: number | null }> = [];
+
+  for (const ds of dsList) {
+    const model = await latestModel(ds.id);
+    const sources = normalizeSources(model?.sources);
+    if (sources.length === 0) {
+      result.push({ source: ds.name, model: ds.name, row_count: ds.rowCount });
+    } else if (sources.length === 1) {
+      result.push({ source: sources[0].name, description: sources[0].description, model: ds.name, row_count: ds.rowCount });
+    } else {
+      for (const src of sources) {
+        result.push({ source: src.name, description: src.description, model: ds.name });
+      }
+    }
+  }
+  return result;
+}
+
+// Find the dataset+model that owns a given source name.
+// Falls back to matching by dataset name for old models without sources populated.
+async function findBySource(userId: string, sourceName: string) {
+  const dsList = await db
     .select()
     .from(datasets)
-    .where(and(or(eq(datasets.userId, userId), eq(datasets.isPublic, true)), eq(datasets.name, name)))
+    .where(and(
+      or(eq(datasets.userId, userId), eq(datasets.isPublic, true)),
+      eq(datasets.status, "ready"),
+    ))
     .orderBy(desc(datasets.createdAt));
-  return rows.find((r) => r.status === "ready") ?? rows[0];
+
+  for (const ds of dsList) {
+    const model = await latestModel(ds.id);
+    if (!model) continue;
+    const sources = normalizeSources(model.sources);
+    const names = sources.map((s) => s.name);
+    if (names.includes(sourceName) || (names.length === 0 && ds.name === sourceName) || (names.length === 1 && ds.name === sourceName)) {
+      return { ds, model };
+    }
+  }
+  return null;
 }
 
 async function latestModel(datasetId: string) {
@@ -156,51 +189,39 @@ export async function callTool(
   args: Record<string, unknown>,
 ): Promise<ToolResult> {
   switch (name) {
+    case "list_sources":
     case "list_datasets": {
-      const rows = await listUserDatasets(user.id);
-      return text(
-        rows.map((r) => ({
-          name: r.name,
-          status: r.status,
-          source_url: r.sourceUrl,
-          row_count: r.rowCount,
-          column_count: Array.isArray(r.schemaJson) ? r.schemaJson.length : null,
-          ready_at: r.readyAt,
-        })),
-      );
+      // list_datasets kept as a silent alias for backward compatibility.
+      const sources = await listAllSources(user.id);
+      return text(sources);
     }
     case "describe_semantic_model": {
-      const dsName = String(args.dataset ?? "");
-      const ds = await findDataset(user.id, dsName);
-      if (!ds) return errText(`dataset '${dsName}' not found`);
-      if (ds.status !== "ready") return errText(`dataset '${dsName}' is ${ds.status}, not ready`);
-      const model = await latestModel(ds.id);
-      if (!model) return errText(`dataset '${dsName}' has no Malloy model`);
+      const sourceName = String(args.source ?? args.dataset ?? "");
+      const found = await findBySource(user.id, sourceName);
+      if (!found) return errText(`source '${sourceName}' not found`);
+      const { ds, model } = found;
       return text({
-        name: ds.name,
-        column_count: Array.isArray(ds.schemaJson) ? ds.schemaJson.length : 0,
-        schema: ds.schemaJson,
-        sources: model.sources ?? null,
+        source: sourceName,
+        model: ds.name,
         malloy_source: model.source,
       });
     }
     case "sample_rows": {
-      const dsName = String(args.dataset ?? "");
+      const sourceName = String(args.source ?? args.dataset ?? "");
       const n = Math.max(1, Math.min(200, Number(args.n ?? 20)));
-      const ds = await findDataset(user.id, dsName);
-      if (!ds) return errText(`dataset '${dsName}' not found`);
-      if (ds.status !== "ready") return errText(`dataset '${dsName}' is ${ds.status}, not ready`);
-      if (!ds.mdTable) return errText(`sample_rows is not available for '${dsName}' — it was loaded from GitHub and has no MotherDuck table`);
+      const found = await findBySource(user.id, sourceName);
+      if (!found) return errText(`source '${sourceName}' not found`);
+      const { ds } = found;
+      if (!ds.mdTable) return errText(`sample_rows is not available for '${sourceName}' — it has no MotherDuck table`);
       const rows = await sampleTable(ds.mdTable, n);
       return text(rows);
     }
     case "compile_analytical_query": {
-      const dsName = String(args.dataset ?? "");
+      const sourceName = String(args.source ?? args.dataset ?? "");
       const malloyQ = String(args.malloy ?? "");
-      const ds = await findDataset(user.id, dsName);
-      if (!ds) return errText(`dataset '${dsName}' not found`);
-      const model = await latestModel(ds.id);
-      if (!model) return errText(`dataset '${dsName}' has no Malloy model`);
+      const found = await findBySource(user.id, sourceName);
+      if (!found) return errText(`source '${sourceName}' not found`);
+      const { model } = found;
       const files = await modelFileMap(model);
       const res = files.size > 1
         ? await compileMalloyFiles(files, "index.malloy", malloyQ)
@@ -209,14 +230,13 @@ export async function callTool(
       return text({ sql: res.sql });
     }
     case "run_analytical_query": {
-      const dsName = String(args.dataset ?? "");
+      const sourceName = String(args.source ?? args.dataset ?? "");
       const malloyQ = String(args.malloy ?? "");
       const maxRows = Math.max(1, Math.min(10000, Number(args.max_rows ?? 10000)));
-      const ds = await findDataset(user.id, dsName);
-      if (!ds) return errText(`dataset '${dsName}' not found`);
-      if (ds.status !== "ready") return errText(`dataset '${dsName}' is ${ds.status}, not ready`);
-      const model = await latestModel(ds.id);
-      if (!model) return errText(`dataset '${dsName}' has no Malloy model`);
+      const found = await findBySource(user.id, sourceName);
+      if (!found) return errText(`source '${sourceName}' not found`);
+      const { ds, model } = found;
+      if (ds.status !== "ready") return errText(`source '${sourceName}' is not ready`);
       const files = await modelFileMap(model);
       const t0 = Date.now();
       try {

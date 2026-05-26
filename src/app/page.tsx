@@ -2,15 +2,14 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 
-type DatasetSummary = {
-  id: string;
-  name: string;
-  sourceUrl: string;
+type SourceSummary = {
+  source: string;
+  description: string | null;
+  model: string;
+  datasetId: string;
   status: string;
-  rowCount: number | null;
-  createdAt: string;
-  readyAt: string | null;
   isPublic: boolean;
+  rowCount: number | null;
   ownerEmail?: string | null;
   ownerName?: string | null;
 };
@@ -26,7 +25,7 @@ type Me = {
 
 export default function HomePage() {
   const [me, setMe] = useState<Me | null | undefined>(undefined);
-  const [datasets, setDatasets] = useState<DatasetSummary[] | null>(null);
+  const [sources, setSources] = useState<SourceSummary[] | null>(null);
 
   useEffect(() => { void load(); }, []);
 
@@ -35,8 +34,8 @@ export default function HomePage() {
     const meJson = await meRes.json();
     setMe(meJson.user);
     if (meJson.user) {
-      const r = await fetch("/api/datasets");
-      if (r.ok) setDatasets(await r.json());
+      const r = await fetch("/api/sources");
+      if (r.ok) setSources(await r.json());
     }
   }
 
@@ -69,16 +68,28 @@ export default function HomePage() {
           {me.isAdmin && (
             <section className="flex gap-3">
               <Link
-                href="/datasets/new/ingest"
+                href="/datasets/new/table"
                 className="inline-block rounded bg-black text-white dark:bg-white dark:text-black px-4 py-2 text-xs"
               >
-                + Ingest from URL
+                + Build from existing table
               </Link>
               <Link
                 href="/datasets/new/github"
                 className="inline-block rounded border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 px-4 py-2 text-xs hover:bg-gray-50 dark:hover:bg-gray-900"
               >
                 + Add Malloy model from GitHub
+              </Link>
+              <Link
+                href="/datasets/new/ingest"
+                className="inline-block rounded border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 px-4 py-2 text-xs hover:bg-gray-50 dark:hover:bg-gray-900"
+              >
+                + Ingest from URL
+              </Link>
+              <Link
+                href="/admin/users"
+                className="inline-block rounded border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 px-4 py-2 text-xs hover:bg-gray-50 dark:hover:bg-gray-900 ml-auto"
+              >
+                users
               </Link>
             </section>
           )}
@@ -88,33 +99,41 @@ export default function HomePage() {
           <section>
             <div className="flex items-baseline justify-between mb-3">
               <h2 className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                {me.isAdmin ? "All datasets" : "Public datasets"}
+                {me.isAdmin ? "All sources" : "Public sources"}
               </h2>
               <button onClick={load} className="text-xs text-gray-500 dark:text-gray-400 hover:underline">refresh</button>
             </div>
-            {datasets === null ? (
+            {sources === null ? (
               <p className="text-gray-500 dark:text-gray-400 text-xs">loading…</p>
-            ) : datasets.length === 0 ? (
-              <p className="text-gray-500 dark:text-gray-400 text-xs">No datasets yet.</p>
+            ) : sources.length === 0 ? (
+              <p className="text-gray-500 dark:text-gray-400 text-xs">No sources yet.</p>
             ) : (
               <ul className="border border-gray-200 dark:border-gray-800 rounded divide-y divide-gray-200 dark:divide-gray-800">
-                {datasets.map((d) => (
-                  <li key={d.id}>
-                    <Link href={`/datasets/${d.id}`}
+                {sources.map((s, i) => (
+                  <li key={`${s.datasetId}-${s.source}-${i}`}>
+                    <Link href={`/datasets/${s.datasetId}`}
                       className="flex items-center justify-between gap-3 px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-900/50">
-                      <span className="flex-1 truncate">{d.name}</span>
-                      {me.isAdmin && (d.ownerEmail || d.ownerName) && (
+                      <span className="flex-1 min-w-0">
+                        <span className="truncate block">{s.source}</span>
+                        {s.description && (
+                          <span className="text-gray-400 dark:text-gray-500 text-xs truncate block">{s.description}</span>
+                        )}
+                        {!s.description && s.source !== s.model && (
+                          <span className="text-gray-400 dark:text-gray-500 text-xs truncate block">in {s.model}</span>
+                        )}
+                      </span>
+                      {me.isAdmin && (s.ownerEmail || s.ownerName) && (
                         <span className="text-gray-400 dark:text-gray-500 text-xs truncate max-w-[160px]">
-                          {d.ownerEmail ?? d.ownerName}
+                          {s.ownerEmail ?? s.ownerName}
                         </span>
                       )}
-                      <span className="text-gray-500 dark:text-gray-400 text-xs">
-                        {d.rowCount ? `${d.rowCount.toLocaleString()} rows` : "—"}
+                      <span className="text-gray-500 dark:text-gray-400 text-xs whitespace-nowrap">
+                        {s.rowCount ? `${s.rowCount.toLocaleString()} rows` : "—"}
                       </span>
-                      <span className={`text-xs px-1.5 py-0.5 rounded ${d.isPublic ? "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300" : "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400"}`}>
-                        {d.isPublic ? "public" : "private"}
+                      <span className={`text-xs px-1.5 py-0.5 rounded whitespace-nowrap ${s.isPublic ? "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300" : "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400"}`}>
+                        {s.isPublic ? "public" : "private"}
                       </span>
-                      <StatusBadge status={d.status} />
+                      <StatusBadge status={s.status} />
                     </Link>
                   </li>
                 ))}
@@ -184,7 +203,7 @@ function McpSetup() {
       </div>
 
       <div className="text-xs text-gray-500 dark:text-gray-400">
-        Available tools: <code>list_datasets</code>, <code>describe_semantic_model</code>,{" "}
+        Available tools: <code>list_sources</code>, <code>describe_semantic_model</code>,{" "}
         <code>sample_rows</code>, <code>compile_analytical_query</code>, <code>run_analytical_query</code>
       </div>
     </section>

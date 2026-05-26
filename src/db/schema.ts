@@ -135,9 +135,9 @@ export const malloyModels = pgTable(
     generatedBy: text("generated_by").notNull(),
     compiledAt: timestamp("compiled_at", { withTimezone: true }),
     compileError: text("compile_error"),
-    // Names of Malloy sources/explores declared in this model.
-    // Populated for GitHub-loaded models; null for Claude-generated single-file models.
-    sources: jsonb("sources").$type<string[]>(),
+    // Sources/explores declared in this model, with optional doc-string descriptions.
+    // New format: Array<{name, description?}>. Legacy format: string[] (no descriptions).
+    sources: jsonb("sources").$type<Array<string | { name: string; description?: string | null }>>(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .default(sql`now()`),

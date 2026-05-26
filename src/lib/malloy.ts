@@ -69,12 +69,14 @@ function fileUrl(path: string): URL {
   return new URL(`file:///${path.replace(/^\//, "")}`);
 }
 
-// Load and compile a model via a URLReader, returning its source names.
+export type SourceInfo = { name: string; description: string | null };
+
+// Load and compile a model via a URLReader, returning source names and descriptions.
 // Used during GitHub refresh — no query needed, just introspection.
 export async function introspectModelWithReader(
   reader: malloy.URLReader | GitHubURLReader,
   entryPath: string,
-): Promise<{ ok: true; sources: string[] } | { ok: false; error: string }> {
+): Promise<{ ok: true; sources: SourceInfo[] } | { ok: false; error: string }> {
   const conn = makeConnection();
   try {
     const runtime = new malloy.SingleConnectionRuntime({
@@ -82,7 +84,10 @@ export async function introspectModelWithReader(
       urlReader: reader as malloy.URLReader,
     });
     const compiled = await runtime.getModel(fileUrl(entryPath));
-    const sources = compiled.explores.map((e) => e.name);
+    const sources = compiled.explores.map((e) => ({
+      name: e.name,
+      description: e.annotations.forRoute('"')[0]?.content.trim() ?? null,
+    }));
     return { ok: true, sources };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
