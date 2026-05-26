@@ -116,19 +116,40 @@ export async function introspectModelWithReader(
   }
 }
 
-export type FieldInfo = {
+export type FieldNode = {
   name: string;
   kind: "dimension" | "measure" | "view" | "join";
   type?: string;
   description: string | null;
+  relationship?: string;
+  fields?: FieldNode[];
 };
 
-// Compile a file map and return all intrinsic fields for a named source.
+function serializeFields(explore: malloy.Explore): FieldNode[] {
+  return explore.intrinsicFields.map((f) => {
+    const description = f.annotations.forRoute('"')[0]?.content.trim() ?? null;
+    if (f.isQueryField()) return { name: f.name, kind: "view" as const, description };
+    if (f.isExploreField()) return {
+      name: f.name, kind: "join" as const, description,
+      relationship: f.joinRelationship,
+      fields: serializeFields(f),
+    };
+    const kind = (f.isAtomicField() && (f.sourceWasMeasure() || f.sourceWasMeasureLike())) ? "measure" as const : "dimension" as const;
+    return { name: f.name, kind, type: f.isAtomicField() ? f.type : undefined, description };
+  });
+}
+
+export type SourceDescription = {
+  primary_key: string | null;
+  fields: FieldNode[];
+};
+
+// Compile a file map and return the full hierarchical field tree for a named source.
 export async function describeSourceFields(
   files: Map<string, string>,
   entryPath: string,
   sourceName: string,
-): Promise<FieldInfo[] | null> {
+): Promise<SourceDescription | null> {
   const urlMap = new Map<string, string>();
   for (const [path, content] of files) {
     urlMap.set(fileUrl(path).toString(), content);
@@ -140,14 +161,7 @@ export async function describeSourceFields(
     const compiled = await runtime.getModel(fileUrl(entryPath));
     const explore = compiled.explores.find((e) => e.name === sourceName);
     if (!explore) return null;
-    return explore.intrinsicFields.map((f) => {
-      const description = f.annotations.forRoute('"')[0]?.content.trim() ?? null;
-      if (f.isQueryField()) return { name: f.name, kind: "view" as const, description };
-      if (f.isExploreField()) return { name: f.name, kind: "join" as const, description };
-      // AtomicField (the only remaining case in Field union)
-      const kind = (f.isAtomicField() && (f.sourceWasMeasure() || f.sourceWasMeasureLike())) ? "measure" as const : "dimension" as const;
-      return { name: f.name, kind, type: f.isAtomicField() ? f.type : undefined, description };
-    });
+    return { primary_key: explore.primaryKey ?? null, fields: serializeFields(explore) };
   } catch {
     return null;
   } finally {
