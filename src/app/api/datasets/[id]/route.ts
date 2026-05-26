@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { desc } from "drizzle-orm";
 import { db, datasets, malloyModels, malloyModelFiles, users } from "@/db";
+import { connect, mdRef } from "@/lib/duckdb";
 import { getSessionUser, UnauthorizedError } from "@/lib/user";
 import { isAdmin } from "@/lib/admin";
 
@@ -60,7 +61,9 @@ export async function GET(
           source: model.source,
           generatedBy: model.generatedBy,
           compiledAt: model.compiledAt,
-          sources: model.sources ?? null,
+          sources: model.sources
+            ? (model.sources as Array<string | { name: string }>).map((s) => typeof s === "string" ? s : s.name)
+            : null,
           files: files.length > 0 ? files : null,
         }
       : null,
@@ -88,4 +91,33 @@ export async function PATCH(
   const [updated] = await db.update(datasets).set(patch).where(eq(datasets.id, id)).returning();
   if (!updated) return NextResponse.json({ error: "not found" }, { status: 404 });
   return NextResponse.json({ id: updated.id, isPublic: updated.isPublic, githubRepo: updated.githubRepo, githubBranch: updated.githubBranch });
+}
+
+export async function DELETE(
+  _req: Request,
+  ctx: RouteContext<"/api/datasets/[id]">,
+) {
+  let me;
+  try { me = await getSessionUser(); } catch (err) {
+    if (err instanceof UnauthorizedError) return NextResponse.json({ error: "sign in required" }, { status: 401 });
+    throw err;
+  }
+  if (!isAdmin(me)) return NextResponse.json({ error: "admin required" }, { status: 403 });
+
+  const { id } = await ctx.params;
+  const [ds] = await db.select().from(datasets).where(eq(datasets.id, id));
+  if (!ds) return NextResponse.json({ error: "not found" }, { status: 404 });
+
+  // Drop the MotherDuck table if one exists (GitHub datasets have empty mdTable).
+  if (ds.mdTable) {
+    const conn = await connect();
+    try {
+      await conn.run(`DROP TABLE IF EXISTS ${mdRef(ds.mdTable)}`);
+    } finally {
+      conn.closeSync();
+    }
+  }
+
+  await db.delete(datasets).where(eq(datasets.id, id));
+  return NextResponse.json({ ok: true });
 }
