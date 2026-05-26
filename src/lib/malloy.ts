@@ -117,13 +117,40 @@ export async function introspectModelWithReader(
 }
 
 export type FieldInfo = { name: string; type: string; description: string | null };
+export type ViewInfo = { name: string; description: string | null };
+export type JoinInfo = { name: string; description: string | null; relationship: string } & SourceFields;
 export type SourceFields = {
+  primary_key: string | null;
   dimensions: FieldInfo[];
   measures: FieldInfo[];
-  views: string[];
+  views: ViewInfo[];
+  joins: JoinInfo[];
 };
 
-// Compile a file map and return structured field info for a named source.
+function extractFields(explore: malloy.Explore): SourceFields {
+  const dimensions: FieldInfo[] = [];
+  const measures: FieldInfo[] = [];
+  const views: ViewInfo[] = [];
+  const joins: JoinInfo[] = [];
+  for (const f of explore.intrinsicFields) {
+    const desc = f.annotations.forRoute('"')[0]?.content.trim() ?? null;
+    if (f.isQueryField()) {
+      views.push({ name: f.name, description: desc });
+    } else if (f.isExploreField()) {
+      joins.push({ name: f.name, description: desc, relationship: f.joinRelationship, ...extractFields(f) });
+    } else if (f.isAtomicField()) {
+      const entry: FieldInfo = { name: f.name, type: f.type, description: desc };
+      if (f.sourceWasMeasure() || f.sourceWasMeasureLike()) {
+        measures.push(entry);
+      } else {
+        dimensions.push(entry);
+      }
+    }
+  }
+  return { primary_key: explore.primaryKey ?? null, dimensions, measures, views, joins };
+}
+
+// Compile a file map and return full structured field info for a named source.
 export async function describeSourceFields(
   files: Map<string, string>,
   entryPath: string,
@@ -140,23 +167,7 @@ export async function describeSourceFields(
     const compiled = await runtime.getModel(fileUrl(entryPath));
     const explore = compiled.explores.find((e) => e.name === sourceName);
     if (!explore) return null;
-    const dimensions: FieldInfo[] = [];
-    const measures: FieldInfo[] = [];
-    const views: string[] = [];
-    for (const f of explore.intrinsicFields) {
-      if (f.isQueryField()) {
-        views.push(f.name);
-      } else if (f.isAtomicField()) {
-        const desc = f.annotations.forRoute('"')[0]?.content.trim() ?? null;
-        const entry: FieldInfo = { name: f.name, type: f.type, description: desc };
-        if (f.sourceWasMeasure() || f.sourceWasMeasureLike()) {
-          measures.push(entry);
-        } else {
-          dimensions.push(entry);
-        }
-      }
-    }
-    return { dimensions, measures, views };
+    return extractFields(explore);
   } catch {
     return null;
   } finally {
