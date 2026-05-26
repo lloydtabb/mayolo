@@ -71,6 +71,26 @@ function fileUrl(path: string): URL {
 
 export type SourceInfo = { name: string; description: string | null };
 
+// Extract source names and descriptions from an inline model source string.
+// Used after Claude generates a model — no URLReader needed.
+export async function introspectInlineModel(modelSource: string): Promise<SourceInfo[]> {
+  const conn = makeConnection();
+  try {
+    const urlMap = new Map([[fileUrl("index.malloy").toString(), modelSource]]);
+    const reader = new malloy.InMemoryURLReader(urlMap);
+    const runtime = new malloy.SingleConnectionRuntime({ connection: conn, urlReader: reader });
+    const compiled = await runtime.getModel(fileUrl("index.malloy"));
+    return compiled.explores.map((e) => ({
+      name: e.name,
+      description: e.annotations.forRoute('"')[0]?.content.trim() ?? null,
+    }));
+  } catch {
+    return [];
+  } finally {
+    await conn.close();
+  }
+}
+
 // Load and compile a model via a URLReader, returning source names and descriptions.
 // Used during GitHub refresh — no query needed, just introspection.
 export async function introspectModelWithReader(

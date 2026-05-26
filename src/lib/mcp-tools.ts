@@ -139,7 +139,8 @@ async function findBySource(userId: string, sourceName: string) {
     const sources = normalizeSources(model.sources);
     const names = sources.map((s) => s.name);
     if (names.includes(sourceName) || (names.length === 0 && ds.name === sourceName) || (names.length === 1 && ds.name === sourceName)) {
-      return { ds, model };
+      const description = sources.find((s) => s.name === sourceName)?.description ?? null;
+      return { ds, model, description };
     }
   }
   return null;
@@ -199,10 +200,11 @@ export async function callTool(
       const sourceName = String(args.source ?? args.dataset ?? "");
       const found = await findBySource(user.id, sourceName);
       if (!found) return errText(`source '${sourceName}' not found`);
-      const { ds, model } = found;
+      const { ds, model, description } = found;
       return text({
         source: sourceName,
         model: ds.name,
+        description,
         malloy_source: model.source,
       });
     }

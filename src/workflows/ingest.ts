@@ -4,7 +4,21 @@ import { FatalError } from "workflow";
 import { setDatasetStatus, getDataset } from "@/lib/datasets";
 import { createTableFromUrl, describeTable, sampleTable, mdMalloyRef, type ColumnInfo } from "@/lib/duckdb";
 import { authorMalloyModel } from "@/lib/claude";
-import { compileMalloy } from "@/lib/malloy";
+import { compileMalloy, introspectInlineModel } from "@/lib/malloy";
+
+export async function modelExistingTable(datasetId: string) {
+  "use workflow";
+  try {
+    await introspectStep(datasetId);
+    await modelStep(datasetId);
+    await finishStep(datasetId);
+    return { ok: true as const, datasetId };
+  } catch (err) {
+    const msg = err instanceof Error ? (err.stack ?? err.message) : String(err);
+    await markFailed(datasetId, msg);
+    throw err;
+  }
+}
 
 export async function ingestDataset(datasetId: string) {
   "use workflow";
@@ -76,11 +90,13 @@ async function modelStep(datasetId: string) {
 
     const validate = await compileMalloy(source, probe);
     if (validate.ok) {
+      const sources = await introspectInlineModel(source);
       await db.insert(malloyModels).values({
         datasetId,
         source,
         generatedBy,
         compiledAt: new Date(),
+        sources: sources.length > 0 ? sources : undefined,
       });
       return;
     }
