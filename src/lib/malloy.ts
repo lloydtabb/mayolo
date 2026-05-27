@@ -89,9 +89,10 @@ export async function introspectModelWithReader(
   entryPath: string,
   configJson?: string,
 ): Promise<{ ok: true; sources: SourceInfo[] } | { ok: false; error: string }> {
-  const { runtime, cleanup } = buildRuntimeWithReader(reader as malloy.URLReader, configJson);
+  let handle: RuntimeHandle | undefined;
   try {
-    const compiled = await runtime.getModel(fileUrl(entryPath));
+    handle = buildRuntimeWithReader(reader as malloy.URLReader, configJson);
+    const compiled = await handle.runtime.getModel(fileUrl(entryPath));
     const sources = compiled.explores.map((e) => ({
       name: e.name,
       description: e.annotations.forRoute('"')[0]?.content.trim() ?? null,
@@ -100,7 +101,7 @@ export async function introspectModelWithReader(
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   } finally {
-    await cleanup();
+    await handle?.cleanup();
   }
 }
 

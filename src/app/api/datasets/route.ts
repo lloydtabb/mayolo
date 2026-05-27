@@ -25,10 +25,23 @@ export async function POST(req: Request) {
   }
   if (!isAdmin(user)) return NextResponse.json({ error: "admin required" }, { status: 403 });
 
-  const raw = await req.json();
-  const body = GitHubBody.parse(raw);
+  let raw: unknown;
+  try { raw = await req.json(); } catch {
+    return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
+  }
+
+  let body: ReturnType<typeof GitHubBody.parse>;
+  try { body = GitHubBody.parse(raw); } catch (err) {
+    return NextResponse.json({ error: String(err) }, { status: 400 });
+  }
+
   const name = nameToSlug(body.name);
-  const { owner, repo } = parseGitHubRepo(body.githubRepo);
+  let owner: string, repo: string;
+  try {
+    ({ owner, repo } = parseGitHubRepo(body.githubRepo));
+  } catch (err) {
+    return NextResponse.json({ error: String(err) }, { status: 400 });
+  }
   const branch = body.githubBranch;
 
   const id = crypto.randomUUID();
@@ -45,50 +58,57 @@ export async function POST(req: Request) {
     })
     .returning();
 
-  const reader = new GitHubURLReader(owner, repo, branch, body.useToken);
-
-  let malloyConfig: string | undefined;
   try {
-    malloyConfig = await fetchGitHubFile(owner, repo, branch, "malloy-config.json", {
-      useToken: body.useToken,
-    });
-  } catch { /* Not present — fine. */ }
+    const reader = new GitHubURLReader(owner, repo, branch, body.useToken);
 
-  const result = await introspectModelWithReader(reader, "index.malloy", malloyConfig);
+    let malloyConfig: string | undefined;
+    try {
+      malloyConfig = await fetchGitHubFile(owner, repo, branch, "malloy-config.json", {
+        useToken: body.useToken,
+      });
+    } catch { /* Not present — fine. */ }
 
-  if (!result.ok) {
-    await db.update(datasets).set({ status: "failed", statusError: result.error }).where(eq(datasets.id, id));
-    return NextResponse.json({ id: row.id, error: result.error, status: "failed" }, { status: 422 });
+    const result = await introspectModelWithReader(reader, "index.malloy", malloyConfig);
+
+    if (!result.ok) {
+      await db.update(datasets).set({ status: "failed", statusError: result.error }).where(eq(datasets.id, id));
+      return NextResponse.json({ id: row.id, error: result.error, status: "failed" }, { status: 422 });
+    }
+
+    const indexContent = reader.fetched.get("index.malloy") ?? "";
+    const [model] = await db
+      .insert(malloyModels)
+      .values({
+        datasetId: id,
+        version: 1,
+        source: indexContent,
+        generatedBy: `github:${body.githubRepo}@${branch}`,
+        compiledAt: new Date(),
+        sources: result.sources,
+      })
+      .returning();
+
+    const allFiles = new Map(reader.fetched);
+    if (malloyConfig) allFiles.set("malloy-config.json", malloyConfig);
+
+    if (allFiles.size > 0) {
+      await db.insert(malloyModelFiles).values(
+        Array.from(allFiles.entries()).map(([path, content]) => ({
+          modelId: model.id,
+          path,
+          content,
+        })),
+      );
+    }
+
+    await db.update(datasets).set({ status: "ready", readyAt: new Date() }).where(eq(datasets.id, id));
+    return NextResponse.json({ id: row.id, name, status: "ready", sources: result.sources });
+  } catch (err) {
+    console.error("[POST /api/datasets] uncaught error:", err);
+    const msg = err instanceof Error ? err.message : String(err);
+    await db.update(datasets).set({ status: "failed", statusError: msg }).where(eq(datasets.id, id)).catch(() => {});
+    return NextResponse.json({ id, error: msg, status: "failed" }, { status: 500 });
   }
-
-  const indexContent = reader.fetched.get("index.malloy") ?? "";
-  const [model] = await db
-    .insert(malloyModels)
-    .values({
-      datasetId: id,
-      version: 1,
-      source: indexContent,
-      generatedBy: `github:${body.githubRepo}@${branch}`,
-      compiledAt: new Date(),
-      sources: result.sources,
-    })
-    .returning();
-
-  const allFiles = new Map(reader.fetched);
-  if (malloyConfig) allFiles.set("malloy-config.json", malloyConfig);
-
-  if (allFiles.size > 0) {
-    await db.insert(malloyModelFiles).values(
-      Array.from(allFiles.entries()).map(([path, content]) => ({
-        modelId: model.id,
-        path,
-        content,
-      })),
-    );
-  }
-
-  await db.update(datasets).set({ status: "ready", readyAt: new Date() }).where(eq(datasets.id, id));
-  return NextResponse.json({ id: row.id, name, status: "ready", sources: result.sources });
 }
 
 export async function GET() {
