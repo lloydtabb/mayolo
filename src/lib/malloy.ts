@@ -3,15 +3,32 @@ import { DuckDBConnection as MalloyDuckDBConnection } from "@malloydata/db-duckd
 import { env } from "./env";
 import type { GitHubURLReader } from "./github";
 
-// Side-effect imports register each backend with MalloyConfig's connection registry.
-// Required so malloy-config.json can specify any of these connection types.
-import "@malloydata/db-duckdb/native";
-import "@malloydata/db-postgres";
-import "@malloydata/db-bigquery";
-import "@malloydata/db-snowflake";
-import "@malloydata/db-trino";
-import "@malloydata/db-mysql";
-import "@malloydata/db-databricks";
+// DB backends are registered lazily (on first malloy-config.json use) so a broken
+// native dependency (e.g. lz4 for Databricks) cannot crash the module at load time.
+let _connectionTypesReady: Promise<void> | null = null;
+
+function ensureConnectionTypes(): Promise<void> {
+  if (_connectionTypesReady) return _connectionTypesReady;
+  _connectionTypesReady = (async () => {
+    const pkgs = [
+      "@malloydata/db-duckdb/native",
+      "@malloydata/db-postgres",
+      "@malloydata/db-bigquery",
+      "@malloydata/db-snowflake",
+      "@malloydata/db-trino",
+      "@malloydata/db-mysql",
+      "@malloydata/db-databricks",
+    ];
+    for (const pkg of pkgs) {
+      try {
+        await import(pkg);
+      } catch (err) {
+        console.warn(`[malloy] could not register connection backend ${pkg}:`, err);
+      }
+    }
+  })();
+  return _connectionTypesReady;
+}
 
 function makeConnection(): MalloyDuckDBConnection {
   // Same home_directory fix as duckdb.ts — cached MotherDuck extension
@@ -91,7 +108,7 @@ export async function introspectModelWithReader(
 ): Promise<{ ok: true; sources: SourceInfo[] } | { ok: false; error: string }> {
   let handle: RuntimeHandle | undefined;
   try {
-    handle = buildRuntimeWithReader(reader as malloy.URLReader, configJson);
+    handle = await buildRuntimeWithReader(reader as malloy.URLReader, configJson);
     const compiled = await handle.runtime.getModel(fileUrl(entryPath));
     const sources = compiled.explores.map((e) => ({
       name: e.name,
@@ -159,11 +176,12 @@ type RuntimeHandle = {
 
 // Build a Runtime backed by a pre-supplied URLReader (e.g. GitHubURLReader).
 // configJson, if provided, activates the MalloyConfig path; otherwise falls back to DuckDB.
-function buildRuntimeWithReader(
+async function buildRuntimeWithReader(
   reader: malloy.URLReader,
   configJson?: string,
-): RuntimeHandle {
+): Promise<RuntimeHandle> {
   if (configJson) {
+    await ensureConnectionTypes();
     const config = new malloy.MalloyConfig(configJson, {
       overlays: malloy.defaultConfigOverlays(),
     });
@@ -181,7 +199,7 @@ function buildRuntimeWithReader(
 async function buildRuntime(files: Map<string, string>): Promise<RuntimeHandle> {
   const { urlMap, configJson } = splitFiles(files);
   const reader = new malloy.InMemoryURLReader(urlMap);
-  return buildRuntimeWithReader(reader, configJson);
+  return await buildRuntimeWithReader(reader, configJson);
 }
 
 // Compile a file map and return the full hierarchical field tree for a named source.
