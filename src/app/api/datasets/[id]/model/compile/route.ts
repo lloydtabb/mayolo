@@ -36,7 +36,8 @@ export async function POST(
 
   // Multi-file GitHub model: compile stored files with a probe using the first known source.
   if (files.length > 0 && model) {
-    const firstSource = (model.sources as string[] | null)?.[0] ?? ds.name;
+    const rawSource = (model.sources as Array<string | { name: string }> | null)?.[0];
+    const firstSource = typeof rawSource === "string" ? rawSource : (rawSource?.name ?? ds.name);
     const probe = `run: ${firstSource} -> { aggregate: __probe is count() }`;
     const fileMap = new Map(files.map((f) => [f.path, f.content]));
     const result = await compileMalloyFiles(fileMap, "index.malloy", probe);
