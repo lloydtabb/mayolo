@@ -27,7 +27,7 @@ export async function refreshGitHubModel(datasetId: string): Promise<RefreshResu
     // Not present — fine.
   }
 
-  const result = await introspectModelWithReader(reader, "index.malloy");
+  const result = await introspectModelWithReader(reader, "index.malloy", malloyConfig);
   if (!result.ok) return { ok: false, error: result.error };
 
   const [latest] = await db

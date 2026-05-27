@@ -82,17 +82,15 @@ function fileUrl(path: string): URL {
 export type SourceInfo = { name: string; description: string | null };
 
 // Load and compile a model via a URLReader, returning source names and descriptions.
-// Used during GitHub refresh — no query needed, just introspection.
+// configJson, when provided, activates the appropriate backend (Postgres, BigQuery, etc.)
+// instead of the default MotherDuck DuckDB fallback.
 export async function introspectModelWithReader(
   reader: malloy.URLReader | GitHubURLReader,
   entryPath: string,
+  configJson?: string,
 ): Promise<{ ok: true; sources: SourceInfo[] } | { ok: false; error: string }> {
-  const conn = makeConnection();
+  const { runtime, cleanup } = buildRuntimeWithReader(reader as malloy.URLReader, configJson);
   try {
-    const runtime = new malloy.SingleConnectionRuntime({
-      connection: conn,
-      urlReader: reader as malloy.URLReader,
-    });
     const compiled = await runtime.getModel(fileUrl(entryPath));
     const sources = compiled.explores.map((e) => ({
       name: e.name,
@@ -102,7 +100,7 @@ export async function introspectModelWithReader(
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   } finally {
-    await conn.close();
+    await cleanup();
   }
 }
 
@@ -158,13 +156,12 @@ type RuntimeHandle = {
   cleanup: () => Promise<void>;
 };
 
-// Build a Runtime from a file map. If malloy-config.json is present, uses MalloyConfig
-// (which supports BigQuery, Postgres, Snowflake, Trino, MySQL, Databricks, DuckDB).
-// Falls back to a MotherDuck DuckDB SingleConnectionRuntime when no config is present.
-async function buildRuntime(files: Map<string, string>): Promise<RuntimeHandle> {
-  const { urlMap, configJson } = splitFiles(files);
-  const reader = new malloy.InMemoryURLReader(urlMap);
-
+// Build a Runtime backed by a pre-supplied URLReader (e.g. GitHubURLReader).
+// configJson, if provided, activates the MalloyConfig path; otherwise falls back to DuckDB.
+function buildRuntimeWithReader(
+  reader: malloy.URLReader,
+  configJson?: string,
+): RuntimeHandle {
   if (configJson) {
     const config = new malloy.MalloyConfig(configJson, {
       overlays: malloy.defaultConfigOverlays(),
@@ -172,10 +169,18 @@ async function buildRuntime(files: Map<string, string>): Promise<RuntimeHandle> 
     const runtime = new malloy.Runtime({ config, urlReader: reader });
     return { runtime, cleanup: () => runtime.shutdown("close") };
   }
-
   const conn = makeConnection();
   const runtime = new malloy.SingleConnectionRuntime({ connection: conn, urlReader: reader });
   return { runtime, cleanup: () => conn.close() };
+}
+
+// Build a Runtime from a file map. If malloy-config.json is present, uses MalloyConfig
+// (which supports BigQuery, Postgres, Snowflake, Trino, MySQL, Databricks, DuckDB).
+// Falls back to a MotherDuck DuckDB SingleConnectionRuntime when no config is present.
+async function buildRuntime(files: Map<string, string>): Promise<RuntimeHandle> {
+  const { urlMap, configJson } = splitFiles(files);
+  const reader = new malloy.InMemoryURLReader(urlMap);
+  return buildRuntimeWithReader(reader, configJson);
 }
 
 // Compile a file map and return the full hierarchical field tree for a named source.

@@ -5,7 +5,7 @@ import { db, datasets, malloyModels, malloyModelFiles, users } from "@/db";
 import { getSessionUser, UnauthorizedError } from "@/lib/user";
 import { isAdmin } from "@/lib/admin";
 import { nameToSlug } from "@/lib/slug";
-import { GitHubURLReader, parseGitHubRepo } from "@/lib/github";
+import { GitHubURLReader, fetchGitHubFile, parseGitHubRepo } from "@/lib/github";
 import { introspectModelWithReader } from "@/lib/malloy";
 
 export const runtime = "nodejs";
@@ -46,7 +46,15 @@ export async function POST(req: Request) {
     .returning();
 
   const reader = new GitHubURLReader(owner, repo, branch, body.useToken);
-  const result = await introspectModelWithReader(reader, "index.malloy");
+
+  let malloyConfig: string | undefined;
+  try {
+    malloyConfig = await fetchGitHubFile(owner, repo, branch, "malloy-config.json", {
+      useToken: body.useToken,
+    });
+  } catch { /* Not present — fine. */ }
+
+  const result = await introspectModelWithReader(reader, "index.malloy", malloyConfig);
 
   if (!result.ok) {
     await db.update(datasets).set({ status: "failed", statusError: result.error }).where(eq(datasets.id, id));
@@ -66,9 +74,12 @@ export async function POST(req: Request) {
     })
     .returning();
 
-  if (reader.fetched.size > 0) {
+  const allFiles = new Map(reader.fetched);
+  if (malloyConfig) allFiles.set("malloy-config.json", malloyConfig);
+
+  if (allFiles.size > 0) {
     await db.insert(malloyModelFiles).values(
-      Array.from(reader.fetched.entries()).map(([path, content]) => ({
+      Array.from(allFiles.entries()).map(([path, content]) => ({
         modelId: model.id,
         path,
         content,
