@@ -9,7 +9,6 @@ type SourceSummary = {
   datasetId: string;
   status: string;
   isPublic: boolean;
-  rowCount: number | null;
   ownerEmail?: string | null;
   ownerName?: string | null;
 };
@@ -67,22 +66,10 @@ export default function HomePage() {
           {me.isAdmin && (
             <section className="flex gap-3">
               <Link
-                href="/datasets/new/table"
+                href="/datasets/new/github"
                 className="inline-block rounded bg-black text-white dark:bg-white dark:text-black px-4 py-2 text-xs"
               >
-                + Build from existing table
-              </Link>
-              <Link
-                href="/datasets/new/github"
-                className="inline-block rounded border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 px-4 py-2 text-xs hover:bg-gray-50 dark:hover:bg-gray-900"
-              >
                 + Add Malloy model from GitHub
-              </Link>
-              <Link
-                href="/datasets/new/ingest"
-                className="inline-block rounded border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 px-4 py-2 text-xs hover:bg-gray-50 dark:hover:bg-gray-900"
-              >
-                + Ingest from URL
               </Link>
               <Link
                 href="/admin/users"
@@ -126,9 +113,6 @@ export default function HomePage() {
                           {s.ownerEmail ?? s.ownerName}
                         </span>
                       )}
-                      <span className="text-gray-500 dark:text-gray-400 text-xs whitespace-nowrap">
-                        {s.rowCount ? `${s.rowCount.toLocaleString()} rows` : "—"}
-                      </span>
                       <span className={`text-xs px-1.5 py-0.5 rounded whitespace-nowrap ${s.isPublic ? "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300" : "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400"}`}>
                         {s.isPublic ? "public" : "private"}
                       </span>

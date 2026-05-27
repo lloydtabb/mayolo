@@ -81,22 +81,22 @@ function normalizeSources(raw: unknown): SourceInfo[] {
 // Flat list of all sources across all ready models accessible to this user.
 async function listAllSources(userId: string) {
   const dsList = await db
-    .select({ id: datasets.id, name: datasets.name, rowCount: datasets.rowCount })
+    .select({ id: datasets.id, name: datasets.name })
     .from(datasets)
     .where(and(
       or(eq(datasets.userId, userId), eq(datasets.isPublic, true)),
       eq(datasets.status, "ready"),
     ));
 
-  const result: Array<{ source: string; model: string; description?: string | null; row_count?: number | null }> = [];
+  const result: Array<{ source: string; model: string; description?: string | null }> = [];
 
   for (const ds of dsList) {
     const model = await latestModel(ds.id);
     const sources = normalizeSources(model?.sources);
     if (sources.length === 0) {
-      result.push({ source: ds.name, model: ds.name, row_count: ds.rowCount });
+      result.push({ source: ds.name, model: ds.name });
     } else if (sources.length === 1) {
-      result.push({ source: sources[0].name, description: sources[0].description, model: ds.name, row_count: ds.rowCount });
+      result.push({ source: sources[0].name, description: sources[0].description, model: ds.name });
     } else {
       for (const src of sources) {
         result.push({ source: src.name, description: src.description, model: ds.name });

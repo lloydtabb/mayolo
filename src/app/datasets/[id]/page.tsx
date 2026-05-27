@@ -11,20 +11,15 @@ const MalloyCodeEditor = dynamic(
 type DatasetDetail = {
   id: string;
   name: string;
-  sourceUrl: string;
   status: string;
   statusError: string | null;
-  rowCount: number | null;
   createdAt: string;
   readyAt: string | null;
-  workflowRunId: string | null;
   userSlug: string | null;
   isPublic: boolean;
   isAdmin: boolean;
   githubRepo: string | null;
   githubBranch: string | null;
-  schema: Array<{ name: string; type: string; nullable: boolean }> | null;
-  sampleRows: Record<string, unknown>[] | null;
   malloyModel: {
     id: string;
     source: string;
@@ -38,32 +33,10 @@ type DatasetDetail = {
 const TERMINAL = new Set(["ready", "failed"]);
 
 const STAGE_INFO: Record<string, { label: string; detail: string }> = {
-  pending: {
-    label: "Queued",
-    detail:
-      "Workflow is about to start — usually picks up within a couple seconds.",
-  },
-  ingesting: {
-    label: "Loading into MotherDuck",
-    detail: "Pulling from the source URL directly into MotherDuck. Larger files take longer.",
-  },
-  introspecting: {
-    label: "Reading the schema with DuckDB",
-    detail: "Running DESCRIBE and pulling 50 sample rows — no full scan.",
-  },
-  modeling: {
-    label: "Asking Claude to author a Malloy model",
-    detail:
-      "Claude Opus 4.7 sees the schema + samples and writes a Malloy semantic model. Up to 3 retries if it doesn't compile.",
-  },
-  ready: {
-    label: "Ready",
-    detail: "Your dataset is live and queryable via the MCP server.",
-  },
-  failed: {
-    label: "Failed",
-    detail: "See the error details below.",
-  },
+  pending: { label: "Queued", detail: "About to load the model from GitHub." },
+  modeling: { label: "Loading from GitHub", detail: "Fetching and compiling the Malloy model." },
+  ready: { label: "Ready", detail: "Your dataset is live and queryable via the MCP server." },
+  failed: { label: "Failed", detail: "See the error details below." },
 };
 
 export default function DatasetPage({
@@ -104,7 +77,6 @@ export default function DatasetPage({
         <div>
           <Link href="/" className="text-xs text-gray-500 dark:text-gray-400 hover:underline">← all datasets</Link>
           <h1 className="text-xl font-bold mt-2">{data.name}</h1>
-          <p className="text-gray-500 dark:text-gray-400 break-all">{data.sourceUrl}</p>
         </div>
         {data.isAdmin && (
           <div className="flex items-center gap-2">
@@ -127,16 +99,10 @@ export default function DatasetPage({
       </section>
 
       <section className="grid grid-cols-[140px_1fr] gap-y-1 text-xs">
-        <span className="text-gray-500 dark:text-gray-400">rows</span>
-        <span>{data.rowCount ? data.rowCount.toLocaleString() : "—"}</span>
-        <span className="text-gray-500 dark:text-gray-400">workflow</span>
-        <span className="break-all">{data.workflowRunId ?? "—"}</span>
         <span className="text-gray-500 dark:text-gray-400">created</span>
         <span>{new Date(data.createdAt).toLocaleString()}</span>
         <span className="text-gray-500 dark:text-gray-400">ready</span>
-        <span>
-          {data.readyAt ? new Date(data.readyAt).toLocaleString() : "—"}
-        </span>
+        <span>{data.readyAt ? new Date(data.readyAt).toLocaleString() : "—"}</span>
       </section>
 
       {data.statusError && (
@@ -145,39 +111,6 @@ export default function DatasetPage({
           <pre className="text-red-700 dark:text-red-300 text-xs whitespace-pre-wrap bg-red-50 dark:bg-red-950/40 p-3 rounded">
             {data.statusError}
           </pre>
-        </section>
-      )}
-
-      {data.schema && (
-        <section>
-          <h2 className="text-sm font-semibold mb-1">schema</h2>
-          <div className="border border-gray-200 dark:border-gray-800 rounded overflow-hidden">
-            <table className="w-full text-xs">
-              <thead className="bg-gray-50 dark:bg-gray-900 text-gray-500 dark:text-gray-400">
-                <tr>
-                  <th className="text-left px-3 py-1.5 font-normal">name</th>
-                  <th className="text-left px-3 py-1.5 font-normal">type</th>
-                  <th className="text-left px-3 py-1.5 font-normal">nullable</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.schema.map((c) => (
-                  <tr
-                    key={c.name}
-                    className="border-t border-gray-200 dark:border-gray-800"
-                  >
-                    <td className="px-3 py-1">{c.name}</td>
-                    <td className="px-3 py-1 text-gray-600 dark:text-gray-400">
-                      {c.type}
-                    </td>
-                    <td className="px-3 py-1 text-gray-600 dark:text-gray-400">
-                      {c.nullable ? "yes" : "no"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
         </section>
       )}
 

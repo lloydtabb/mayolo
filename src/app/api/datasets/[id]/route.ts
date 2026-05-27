@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { desc } from "drizzle-orm";
 import { db, datasets, malloyModels, malloyModelFiles, users } from "@/db";
-import { connect, mdRef } from "@/lib/duckdb";
 import { getSessionUser, UnauthorizedError } from "@/lib/user";
 import { isAdmin } from "@/lib/admin";
 
@@ -16,7 +15,6 @@ export async function GET(
   const [ds] = await db.select().from(datasets).where(eq(datasets.id, id));
   if (!ds) return NextResponse.json({ error: "not found" }, { status: 404 });
 
-  // Public datasets visible to all; private only to admins and owners.
   let me;
   try { me = await getSessionUser(); } catch (err) {
     if (err instanceof UnauthorizedError) {
@@ -44,15 +42,13 @@ export async function GET(
     : [];
 
   return NextResponse.json({
-    id: ds.id, name: ds.name, sourceUrl: ds.sourceUrl,
-    mdTable: ds.mdTable, rowCount: ds.rowCount, status: ds.status,
-    statusError: ds.statusError, workflowRunId: ds.workflowRunId,
+    id: ds.id, name: ds.name,
+    status: ds.status, statusError: ds.statusError,
     createdAt: ds.createdAt, readyAt: ds.readyAt,
     isPublic: ds.isPublic,
     githubRepo: ds.githubRepo ?? null,
     githubBranch: ds.githubBranch ?? null,
     githubUseToken: ds.githubUseToken,
-    schema: ds.schemaJson, sampleRows: ds.sampleRowsJson,
     userSlug: user?.slug ?? null,
     isAdmin: me ? isAdmin(me) : false,
     malloyModel: model
@@ -107,16 +103,6 @@ export async function DELETE(
   const { id } = await ctx.params;
   const [ds] = await db.select().from(datasets).where(eq(datasets.id, id));
   if (!ds) return NextResponse.json({ error: "not found" }, { status: 404 });
-
-  // Drop the MotherDuck table if one exists (GitHub datasets have empty mdTable).
-  if (ds.mdTable) {
-    const conn = await connect();
-    try {
-      await conn.run(`DROP TABLE IF EXISTS ${mdRef(ds.mdTable)}`);
-    } finally {
-      conn.closeSync();
-    }
-  }
 
   await db.delete(datasets).where(eq(datasets.id, id));
   return NextResponse.json({ ok: true });

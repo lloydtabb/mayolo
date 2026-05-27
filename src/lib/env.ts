@@ -14,9 +14,6 @@ export const env = {
   get MOTHERDUCK_DATABASE() {
     return process.env.MOTHERDUCK_DATABASE ?? "mayolo";
   },
-  get AI_GATEWAY_API_KEY() {
-    return process.env.AI_GATEWAY_API_KEY ?? "";
-  },
   get APP_BASE_URL() {
     return process.env.APP_BASE_URL ?? "http://localhost:3000";
   },

@@ -25,7 +25,6 @@ export async function GET() {
       name: datasets.name,
       status: datasets.status,
       isPublic: datasets.isPublic,
-      rowCount: datasets.rowCount,
       ownerEmail: users.email,
       ownerName: users.name,
     })
@@ -50,7 +49,6 @@ export async function GET() {
     datasetId: string;
     status: string;
     isPublic: boolean;
-    rowCount: number | null;
     ownerEmail?: string | null;
     ownerName?: string | null;
   }> = [];
@@ -74,12 +72,12 @@ export async function GET() {
     };
 
     if (sources.length === 0) {
-      result.push({ source: ds.name, description: null, rowCount: ds.rowCount, ...base });
+      result.push({ source: ds.name, description: null, ...base });
     } else if (sources.length === 1) {
-      result.push({ source: sources[0].name, description: sources[0].description, rowCount: ds.rowCount, ...base });
+      result.push({ source: sources[0].name, description: sources[0].description, ...base });
     } else {
       for (const src of sources) {
-        result.push({ source: src.name, description: src.description, rowCount: null, ...base });
+        result.push({ source: src.name, description: src.description, ...base });
       }
     }
   }
