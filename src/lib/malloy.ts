@@ -3,6 +3,16 @@ import { DuckDBConnection as MalloyDuckDBConnection } from "@malloydata/db-duckd
 import { env } from "./env";
 import type { GitHubURLReader } from "./github";
 
+// Side-effect imports register each backend with MalloyConfig's connection registry.
+// Required so malloy-config.json can specify any of these connection types.
+import "@malloydata/db-duckdb/native";
+import "@malloydata/db-postgres";
+import "@malloydata/db-bigquery";
+import "@malloydata/db-snowflake";
+import "@malloydata/db-trino";
+import "@malloydata/db-mysql";
+import "@malloydata/db-databricks";
+
 function makeConnection(): MalloyDuckDBConnection {
   // Same home_directory fix as duckdb.ts — cached MotherDuck extension
   // can autoload before setupSQL runs if $HOME is unset (Vercel/Lambda).
@@ -125,20 +135,57 @@ export type SourceDescription = {
   fields: FieldNode[];
 };
 
+// Split a file map into a URL reader map and an optional malloy-config.json string.
+// malloy-config.json is config, not a Malloy source file, so it's excluded from the URL map.
+function splitFiles(files: Map<string, string>): {
+  urlMap: Map<string, string>;
+  configJson: string | undefined;
+} {
+  const urlMap = new Map<string, string>();
+  let configJson: string | undefined;
+  for (const [path, content] of files) {
+    if (path === "malloy-config.json") {
+      configJson = content;
+    } else {
+      urlMap.set(fileUrl(path).toString(), content);
+    }
+  }
+  return { urlMap, configJson };
+}
+
+type RuntimeHandle = {
+  runtime: malloy.Runtime | malloy.SingleConnectionRuntime;
+  cleanup: () => Promise<void>;
+};
+
+// Build a Runtime from a file map. If malloy-config.json is present, uses MalloyConfig
+// (which supports BigQuery, Postgres, Snowflake, Trino, MySQL, Databricks, DuckDB).
+// Falls back to a MotherDuck DuckDB SingleConnectionRuntime when no config is present.
+async function buildRuntime(files: Map<string, string>): Promise<RuntimeHandle> {
+  const { urlMap, configJson } = splitFiles(files);
+  const reader = new malloy.InMemoryURLReader(urlMap);
+
+  if (configJson) {
+    const config = new malloy.MalloyConfig(configJson, {
+      overlays: malloy.defaultConfigOverlays(),
+    });
+    const runtime = new malloy.Runtime({ config, urlReader: reader });
+    return { runtime, cleanup: () => runtime.shutdown("close") };
+  }
+
+  const conn = makeConnection();
+  const runtime = new malloy.SingleConnectionRuntime({ connection: conn, urlReader: reader });
+  return { runtime, cleanup: () => conn.close() };
+}
+
 // Compile a file map and return the full hierarchical field tree for a named source.
 export async function describeSourceFields(
   files: Map<string, string>,
   entryPath: string,
   sourceName: string,
 ): Promise<SourceDescription | null> {
-  const urlMap = new Map<string, string>();
-  for (const [path, content] of files) {
-    urlMap.set(fileUrl(path).toString(), content);
-  }
-  const reader = new malloy.InMemoryURLReader(urlMap);
-  const conn = makeConnection();
+  const { runtime, cleanup } = await buildRuntime(files);
   try {
-    const runtime = new malloy.SingleConnectionRuntime({ connection: conn, urlReader: reader });
     const compiled = await runtime.getModel(fileUrl(entryPath));
     const explore = compiled.explores.find((e) => e.name === sourceName);
     if (!explore) return null;
@@ -146,7 +193,7 @@ export async function describeSourceFields(
   } catch {
     return null;
   } finally {
-    await conn.close();
+    await cleanup();
   }
 }
 
@@ -157,24 +204,15 @@ export async function runMalloyFiles(
   query: string,
   opts: { rowLimit?: number } = {},
 ): Promise<RunResult> {
-  const urlMap = new Map<string, string>();
-  for (const [path, content] of files) {
-    urlMap.set(fileUrl(path).toString(), content);
-  }
-  const reader = new malloy.InMemoryURLReader(urlMap);
-  const conn = makeConnection();
+  const { runtime, cleanup } = await buildRuntime(files);
   try {
-    const runtime = new malloy.SingleConnectionRuntime({
-      connection: conn,
-      urlReader: reader,
-    });
     const runner = runtime.loadModel(fileUrl(entryPath)).loadQuery(query);
     const sql = await runner.getSQL();
     const result = await runner.run({ rowLimit: opts.rowLimit ?? DEFAULT_ROW_LIMIT });
     const rows = result.data.toJSON() as Record<string, unknown>[];
     return { sql, rows, rowCount: rows.length };
   } finally {
-    await conn.close();
+    await cleanup();
   }
 }
 
@@ -184,17 +222,8 @@ export async function compileMalloyFiles(
   entryPath: string,
   query: string,
 ): Promise<CompileResult & { sources?: string[] }> {
-  const urlMap = new Map<string, string>();
-  for (const [path, content] of files) {
-    urlMap.set(fileUrl(path).toString(), content);
-  }
-  const reader = new malloy.InMemoryURLReader(urlMap);
-  const conn = makeConnection();
+  const { runtime, cleanup } = await buildRuntime(files);
   try {
-    const runtime = new malloy.SingleConnectionRuntime({
-      connection: conn,
-      urlReader: reader,
-    });
     const url = fileUrl(entryPath);
     const runner = runtime.loadModel(url).loadQuery(query);
     const sql = await runner.getSQL();
@@ -204,6 +233,6 @@ export async function compileMalloyFiles(
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   } finally {
-    await conn.close();
+    await cleanup();
   }
 }

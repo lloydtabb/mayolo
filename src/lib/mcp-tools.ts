@@ -1,7 +1,7 @@
 import { eq, and, desc, or } from "drizzle-orm";
 import { db, datasets, malloyModels, malloyModelFiles, queries, type User } from "@/db";
 import type { SourceInfo } from "./malloy";
-import { compileMalloy, runMalloy, compileMalloyFiles, runMalloyFiles, describeSourceFields } from "./malloy";
+import { compileMalloyFiles, runMalloyFiles, describeSourceFields } from "./malloy";
 
 export type ToolDescriptor = {
   name: string;
@@ -203,9 +203,7 @@ export async function callTool(
       if (!found) return errText(`source '${sourceName}' not found`);
       const { model } = found;
       const files = await modelFileMap(model);
-      const res = files.size > 1
-        ? await compileMalloyFiles(files, "index.malloy", malloyQ)
-        : await compileMalloy(model.source, malloyQ);
+      const res = await compileMalloyFiles(files, "index.malloy", malloyQ);
       if (!res.ok) return errText(`compile failed: ${res.error}`);
       return text({ sql: res.sql });
     }
@@ -220,9 +218,7 @@ export async function callTool(
       const files = await modelFileMap(model);
       const t0 = Date.now();
       try {
-        const res = files.size > 1
-          ? await runMalloyFiles(files, "index.malloy", malloyQ, { rowLimit: maxRows })
-          : await runMalloy(model.source, malloyQ, { rowLimit: maxRows });
+        const res = await runMalloyFiles(files, "index.malloy", malloyQ, { rowLimit: maxRows });
         const durationMs = Date.now() - t0;
         const capped = res.rows.slice(0, maxRows);
         await db.insert(queries).values({

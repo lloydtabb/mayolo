@@ -10,6 +10,8 @@ const nextConfig: NextConfig = {
   serverExternalPackages: [
     "@duckdb/node-api",
     "@duckdb/node-bindings",
+    "@databricks/sql",
+    "lz4",
   ],
   outputFileTracingIncludes: {
     "/mcp": [

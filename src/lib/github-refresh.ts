@@ -1,6 +1,6 @@
 import { desc, eq } from "drizzle-orm";
 import { db, datasets, malloyModels, malloyModelFiles } from "@/db";
-import { GitHubURLReader, parseGitHubRepo } from "./github";
+import { GitHubURLReader, fetchGitHubFile, parseGitHubRepo } from "./github";
 import { introspectModelWithReader, type SourceInfo } from "./malloy";
 
 export type RefreshResult =
@@ -16,6 +16,17 @@ export async function refreshGitHubModel(datasetId: string): Promise<RefreshResu
   const branch = ds.githubBranch ?? "main";
 
   const reader = new GitHubURLReader(owner, repo, branch, ds.githubUseToken);
+
+  // Fetch malloy-config.json from repo root — optional, absent in most repos.
+  let malloyConfig: string | undefined;
+  try {
+    malloyConfig = await fetchGitHubFile(owner, repo, branch, "malloy-config.json", {
+      useToken: ds.githubUseToken,
+    });
+  } catch {
+    // Not present — fine.
+  }
+
   const result = await introspectModelWithReader(reader, "index.malloy");
   if (!result.ok) return { ok: false, error: result.error };
 
@@ -40,9 +51,12 @@ export async function refreshGitHubModel(datasetId: string): Promise<RefreshResu
     })
     .returning();
 
-  if (reader.fetched.size > 0) {
+  const allFiles = new Map(reader.fetched);
+  if (malloyConfig) allFiles.set("malloy-config.json", malloyConfig);
+
+  if (allFiles.size > 0) {
     await db.insert(malloyModelFiles).values(
-      Array.from(reader.fetched.entries()).map(([path, content]) => ({
+      Array.from(allFiles.entries()).map(([path, content]) => ({
         modelId: created.id,
         path,
         content,
