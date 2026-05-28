@@ -176,30 +176,48 @@ export const queries = pgTable(
   (t) => [index("queries_dataset_id_idx").on(t.datasetId)],
 );
 
-// An investigation is a thread of tool calls initiated by an AI agent.
-// Claude calls start_investigation first with a synopsis, then all subsequent
-// tool calls reference the investigation_id so they can be analyzed as a unit.
-export const investigations = pgTable(
-  "investigations",
+// A conversation is a session with a data source. Claude calls start_conversation
+// once when beginning to explore a source. Contains one or more inquiries.
+export const conversations = pgTable(
+  "conversations",
   {
     id: uuid("id").primaryKey().defaultRandom(),
     userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
-    synopsis: text("synopsis").notNull(),
-    clientName: text("client_name"),
+    datasetId: uuid("dataset_id").references(() => datasets.id, { onDelete: "set null" }),
+    source: text("source"),
+    context: text("context"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .default(sql`now()`),
   },
-  (t) => [index("investigations_user_id_idx").on(t.userId)],
+  (t) => [index("conversations_user_id_idx").on(t.userId)],
 );
 
-// One row per MCP tool call. Linked to an investigation when Claude provides
-// the investigation_id. Sequence tracks call order within an investigation.
+// An inquiry is a single question within a conversation. Claude starts a new
+// inquiry when the user's question is unrelated to the previous results.
+export const inquiries = pgTable(
+  "inquiries",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    sequence: integer("sequence").notNull().default(0),
+    question: text("question").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+  },
+  (t) => [index("inquiries_conversation_id_idx").on(t.conversationId)],
+);
+
+// One row per MCP tool call. Always linked to an inquiry (and through it, a conversation).
+// Sequence tracks call order within the inquiry.
 export const toolCalls = pgTable(
   "tool_calls",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    investigationId: uuid("investigation_id").references(() => investigations.id, { onDelete: "set null" }),
+    inquiryId: uuid("inquiry_id").references(() => inquiries.id, { onDelete: "set null" }),
     userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
     datasetId: uuid("dataset_id").references(() => datasets.id, { onDelete: "set null" }),
     sequence: integer("sequence").notNull().default(0),
@@ -215,7 +233,7 @@ export const toolCalls = pgTable(
       .default(sql`now()`),
   },
   (t) => [
-    index("tool_calls_investigation_id_idx").on(t.investigationId),
+    index("tool_calls_inquiry_id_idx").on(t.inquiryId),
     index("tool_calls_user_id_idx").on(t.userId),
   ],
 );
@@ -322,6 +340,8 @@ export type DatasetStatus = (typeof datasetStatus.enumValues)[number];
 export type MalloyModel = typeof malloyModels.$inferSelect;
 export type MalloyModelFile = typeof malloyModelFiles.$inferSelect;
 export type Query = typeof queries.$inferSelect;
+export type Conversation = typeof conversations.$inferSelect;
+export type Inquiry = typeof inquiries.$inferSelect;
 export type User = typeof users.$inferSelect;
 export type OAuthClient = typeof oauthClients.$inferSelect;
 export type OAuthAccessToken = typeof oauthAccessTokens.$inferSelect;

@@ -1,5 +1,5 @@
 import { eq, and, desc, or, count } from "drizzle-orm";
-import { db, datasets, malloyModels, malloyModelFiles, queries, investigations, toolCalls, type User } from "@/db";
+import { db, datasets, malloyModels, malloyModelFiles, queries, conversations, inquiries, toolCalls, type User } from "@/db";
 import type { SourceInfo } from "./malloy";
 import { compileMalloyFiles, runMalloyFiles, describeSourceFields } from "./malloy";
 
@@ -11,18 +11,30 @@ export type ToolDescriptor = {
 
 export const TOOL_DESCRIPTORS: ToolDescriptor[] = [
   {
-    name: "start_investigation",
+    name: "start_conversation",
     description:
-      "Call this FIRST before any other tool. Provide a one-sentence synopsis of what you are trying to answer. Returns an investigation_id — pass it to every subsequent tool call so your work can be tracked and analyzed as a coherent thread.",
+      "Call this ONCE at the beginning of a session, before any other tool. Provide the name of the source you will explore and a brief description of what the user is trying to accomplish overall. Returns a conversation_id to pass to start_inquiry.",
     inputSchema: {
       type: "object",
       properties: {
-        synopsis: {
-          type: "string",
-          description: "One sentence describing the question or goal of this investigation.",
-        },
+        source: { type: "string", description: "The Malloy source name you will be querying." },
+        context: { type: "string", description: "One sentence describing the user's overall goal for this session." },
       },
-      required: ["synopsis"],
+      required: ["source"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "start_inquiry",
+    description:
+      "Call this at the start of each new question. Start a NEW inquiry when the user's question is unrelated to the previous results — for example, switching from 'Hitchcock movies' to 'weekend box office' is a new inquiry, but 'now show me Hitchcock remakes' is the same inquiry continuing. Returns an inquiry_id to pass to all subsequent tool calls for this question.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        conversation_id: { type: "string", description: "ID returned by start_conversation." },
+        question: { type: "string", description: "The user's question, in their words." },
+      },
+      required: ["conversation_id", "question"],
       additionalProperties: false,
     },
   },
@@ -33,7 +45,7 @@ export const TOOL_DESCRIPTORS: ToolDescriptor[] = [
     inputSchema: {
       type: "object",
       properties: {
-        investigation_id: { type: "string", description: "ID returned by start_investigation." },
+        inquiry_id: { type: "string", description: "ID returned by start_inquiry." },
       },
       additionalProperties: false,
     },
@@ -46,7 +58,7 @@ export const TOOL_DESCRIPTORS: ToolDescriptor[] = [
       type: "object",
       properties: {
         source: { type: "string" },
-        investigation_id: { type: "string", description: "ID returned by start_investigation." },
+        inquiry_id: { type: "string", description: "ID returned by start_inquiry." },
       },
       required: ["source"],
       additionalProperties: false,
@@ -64,7 +76,7 @@ export const TOOL_DESCRIPTORS: ToolDescriptor[] = [
           type: "string",
           description: "Malloy query starting with `run:` that references the source name.",
         },
-        investigation_id: { type: "string", description: "ID returned by start_investigation." },
+        inquiry_id: { type: "string", description: "ID returned by start_inquiry." },
       },
       required: ["source", "malloy"],
       additionalProperties: false,
@@ -89,7 +101,7 @@ export const TOOL_DESCRIPTORS: ToolDescriptor[] = [
           description:
             "Maximum rows to return (default 10000). The result is truncated server-side at this value; `truncated: true` indicates more rows are available.",
         },
-        investigation_id: { type: "string", description: "ID returned by start_investigation." },
+        inquiry_id: { type: "string", description: "ID returned by start_inquiry." },
       },
       required: ["source", "malloy"],
       additionalProperties: false,
@@ -105,7 +117,6 @@ function normalizeSources(raw: unknown): SourceInfo[] {
   );
 }
 
-// Flat list of all sources across all ready models accessible to this user.
 async function listAllSources(userId: string) {
   const dsList = await db
     .select({ id: datasets.id, name: datasets.name })
@@ -133,8 +144,6 @@ async function listAllSources(userId: string) {
   return result;
 }
 
-// Find the dataset+model that owns a given source name.
-// Falls back to matching by dataset name for old models without sources populated.
 async function findBySource(userId: string, sourceName: string) {
   const dsList = await db
     .select()
@@ -168,8 +177,6 @@ async function latestModel(datasetId: string) {
   return row;
 }
 
-// Returns the file map for a model. For GitHub multi-file models returns all
-// fetched files; for Claude single-file models returns {index.malloy: source}.
 async function modelFileMap(model: { id: string; source: string }): Promise<Map<string, string>> {
   const files = await db
     .select({ path: malloyModelFiles.path, content: malloyModelFiles.content })
@@ -181,12 +188,28 @@ async function modelFileMap(model: { id: string; source: string }): Promise<Map<
   return new Map([["index.malloy", model.source]]);
 }
 
-async function nextSequence(investigationId: string): Promise<number> {
+async function nextSequence(inquiryId: string): Promise<number> {
   const [row] = await db
     .select({ n: count() })
     .from(toolCalls)
-    .where(eq(toolCalls.investigationId, investigationId));
+    .where(eq(toolCalls.inquiryId, inquiryId));
   return Number(row?.n ?? 0);
+}
+
+async function logCall(fields: {
+  inquiryId?: string;
+  userId: string;
+  datasetId?: string;
+  toolName: string;
+  source?: string;
+  malloyInput?: string;
+  compiledSql?: string;
+  rowCount?: number;
+  durationMs?: number;
+  error?: string;
+}) {
+  const seq = fields.inquiryId ? await nextSequence(fields.inquiryId) : 0;
+  await db.insert(toolCalls).values({ ...fields, sequence: seq }).catch(() => {});
 }
 
 export type ToolResult = {
@@ -195,8 +218,7 @@ export type ToolResult = {
 };
 
 function text(value: unknown): ToolResult {
-  const s =
-    typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  const s = typeof value === "string" ? value : JSON.stringify(value, null, 2);
   return { content: [{ type: "text", text: s }] };
 }
 
@@ -209,26 +231,45 @@ export async function callTool(
   name: string,
   args: Record<string, unknown>,
 ): Promise<ToolResult> {
-  const investigationId = typeof args.investigation_id === "string" ? args.investigation_id : undefined;
+  const inquiryId = typeof args.inquiry_id === "string" ? args.inquiry_id : undefined;
 
   switch (name) {
-    case "start_investigation": {
-      const synopsis = String(args.synopsis ?? "").trim();
-      if (!synopsis) return errText("synopsis is required");
-      const [inv] = await db
-        .insert(investigations)
-        .values({ userId: user.id, synopsis })
-        .returning({ id: investigations.id });
-      return text({ investigation_id: inv.id });
+    case "start_conversation": {
+      const sourceName = String(args.source ?? "").trim();
+      const context = typeof args.context === "string" ? args.context.trim() : undefined;
+      const found = sourceName ? await findBySource(user.id, sourceName) : null;
+      const [conv] = await db
+        .insert(conversations)
+        .values({
+          userId: user.id,
+          datasetId: found?.ds.id,
+          source: sourceName || undefined,
+          context,
+        })
+        .returning({ id: conversations.id });
+      return text({ conversation_id: conv.id });
+    }
+
+    case "start_inquiry": {
+      const conversationId = String(args.conversation_id ?? "").trim();
+      const question = String(args.question ?? "").trim();
+      if (!conversationId) return errText("conversation_id is required");
+      if (!question) return errText("question is required");
+      const [seq] = await db
+        .select({ n: count() })
+        .from(inquiries)
+        .where(eq(inquiries.conversationId, conversationId));
+      const [inq] = await db
+        .insert(inquiries)
+        .values({ conversationId, question, sequence: Number(seq?.n ?? 0) })
+        .returning({ id: inquiries.id });
+      return text({ inquiry_id: inq.id });
     }
 
     case "list_sources":
     case "list_datasets": {
       const sources = await listAllSources(user.id);
-      const seq = investigationId ? await nextSequence(investigationId) : 0;
-      await db.insert(toolCalls).values({
-        investigationId, userId: user.id, sequence: seq, toolName: "list_sources",
-      }).catch(() => {});
+      await logCall({ inquiryId, userId: user.id, toolName: "list_sources" });
       return text(sources);
     }
 
@@ -239,18 +280,8 @@ export async function callTool(
       const { ds, model, description } = found;
       const files = await modelFileMap(model);
       const fields = await describeSourceFields(files, "index.malloy", sourceName);
-      const seq = investigationId ? await nextSequence(investigationId) : 0;
-      await db.insert(toolCalls).values({
-        investigationId, userId: user.id, datasetId: ds.id, sequence: seq,
-        toolName: "describe_semantic_model", source: sourceName,
-      }).catch(() => {});
-      return text({
-        source: sourceName,
-        model: ds.name,
-        description,
-        fields,
-        malloy_source: model.source,
-      });
+      await logCall({ inquiryId, userId: user.id, datasetId: ds.id, toolName: "describe_semantic_model", source: sourceName });
+      return text({ source: sourceName, model: ds.name, description, fields, malloy_source: model.source });
     }
 
     case "compile_analytical_query": {
@@ -261,14 +292,12 @@ export async function callTool(
       const { ds, model } = found;
       const files = await modelFileMap(model);
       const res = await compileMalloyFiles(files, "index.malloy", malloyQ);
-      const seq = investigationId ? await nextSequence(investigationId) : 0;
-      await db.insert(toolCalls).values({
-        investigationId, userId: user.id, datasetId: ds.id, sequence: seq,
-        toolName: "compile_analytical_query", source: sourceName,
-        malloyInput: malloyQ,
+      await logCall({
+        inquiryId, userId: user.id, datasetId: ds.id, toolName: "compile_analytical_query",
+        source: sourceName, malloyInput: malloyQ,
         compiledSql: res.ok ? res.sql : undefined,
         error: res.ok ? undefined : res.error,
-      }).catch(() => {});
+      });
       if (!res.ok) return errText(`compile failed: ${res.error}`);
       return text({ sql: res.sql });
     }
@@ -287,41 +316,14 @@ export async function callTool(
         const res = await runMalloyFiles(files, "index.malloy", malloyQ, { rowLimit: maxRows });
         const durationMs = Date.now() - t0;
         const capped = res.rows.slice(0, maxRows);
-        await db.insert(queries).values({
-          datasetId: ds.id,
-          userId: user.id,
-          malloySource: malloyQ,
-          compiledSql: res.sql,
-          rowCount: res.rowCount,
-          durationMs,
-        });
-        const seq = investigationId ? await nextSequence(investigationId) : 0;
-        await db.insert(toolCalls).values({
-          investigationId, userId: user.id, datasetId: ds.id, sequence: seq,
-          toolName: "run_analytical_query", source: sourceName,
-          malloyInput: malloyQ, compiledSql: res.sql,
-          rowCount: res.rowCount, durationMs,
-        }).catch(() => {});
-        return text({
-          row_count: res.rowCount,
-          rows: capped,
-          truncated: res.rowCount > capped.length,
-          duration_ms: durationMs,
-        });
+        await db.insert(queries).values({ datasetId: ds.id, userId: user.id, malloySource: malloyQ, compiledSql: res.sql, rowCount: res.rowCount, durationMs });
+        await logCall({ inquiryId, userId: user.id, datasetId: ds.id, toolName: "run_analytical_query", source: sourceName, malloyInput: malloyQ, compiledSql: res.sql, rowCount: res.rowCount, durationMs });
+        return text({ row_count: res.rowCount, rows: capped, truncated: res.rowCount > capped.length, duration_ms: durationMs });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        await db.insert(queries).values({
-          datasetId: ds.id,
-          userId: user.id,
-          malloySource: malloyQ,
-          error: msg,
-        });
-        const seq = investigationId ? await nextSequence(investigationId) : 0;
-        await db.insert(toolCalls).values({
-          investigationId, userId: user.id, datasetId: ds.id, sequence: seq,
-          toolName: "run_analytical_query", source: sourceName,
-          malloyInput: malloyQ, error: msg, durationMs: Date.now() - t0,
-        }).catch(() => {});
+        const durationMs = Date.now() - t0;
+        await db.insert(queries).values({ datasetId: ds.id, userId: user.id, malloySource: malloyQ, error: msg });
+        await logCall({ inquiryId, userId: user.id, datasetId: ds.id, toolName: "run_analytical_query", source: sourceName, malloyInput: malloyQ, error: msg, durationMs });
         return errText(`run failed: ${msg}`);
       }
     }
