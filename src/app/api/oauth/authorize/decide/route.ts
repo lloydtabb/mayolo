@@ -19,7 +19,7 @@ export async function POST(request: Request): Promise<Response> {
   if (!authz) return plainError(400, "Authorization request expired or invalid — please retry");
 
   const session = await auth();
-  if (session?.user?.id !== authz.userId) return plainError(401, "Session changed mid-flow — please retry");
+  if (!session?.user?.id) return plainError(401, "Not signed in — please retry");
 
   const url = new URL(authz.redirectUri);
   if (authz.state) url.searchParams.set("state", authz.state);
@@ -30,7 +30,7 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   const code = await issueAuthorizationCode({
-    clientId: authz.clientId, userId: authz.userId, redirectUri: authz.redirectUri,
+    clientId: authz.clientId, userId: session.user.id, redirectUri: authz.redirectUri,
     codeChallenge: authz.codeChallenge, codeChallengeMethod: authz.codeChallengeMethod,
     scope: authz.scope, resource: authz.resource,
   });

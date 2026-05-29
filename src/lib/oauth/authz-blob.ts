@@ -8,7 +8,6 @@ export interface PendingAuthz {
   codeChallengeMethod: "S256";
   resource: string | null;
   state: string | null;
-  userId: string;
   exp: number;
 }
 

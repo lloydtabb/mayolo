@@ -52,7 +52,7 @@ export async function GET(request: Request): Promise<Response> {
 
   const token = signAuthz({
     clientId, redirectUri, scope, codeChallenge, codeChallengeMethod: "S256",
-    resource: resource || null, state: state || null, userId: session.user.id,
+    resource: resource || null, state: state || null,
   });
 
   const consent = new URL("/oauth/consent", url.origin);

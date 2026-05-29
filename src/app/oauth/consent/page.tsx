@@ -21,13 +21,14 @@ export default async function ConsentPage({ searchParams }: PageProps) {
   if (!session?.user?.id) {
     redirect(`/api/auth/signin?callbackUrl=${encodeURIComponent(`/oauth/consent?t=${t}`)}`);
   }
-  if (session.user.id !== authz.userId) return <ErrorScreen message="Session mismatch. Please retry the authorization from your client." />;
 
   const client = await getOAuthClient(authz.clientId);
   if (!client) return <ErrorScreen message="The requesting client is no longer registered." />;
 
   let redirectHost = "";
   try { redirectHost = new URL(authz.redirectUri).host; } catch { redirectHost = authz.redirectUri; }
+
+  const switchUrl = `/api/auth/signout?callbackUrl=${encodeURIComponent(`/api/auth/signin?callbackUrl=${encodeURIComponent(`/oauth/consent?t=${t}`)}`)}`;
 
   return (
     <main className="mx-auto max-w-md px-6 py-16 font-mono text-sm space-y-6">
@@ -39,7 +40,11 @@ export default async function ConsentPage({ searchParams }: PageProps) {
       <section className="rounded border border-gray-200 dark:border-gray-800 p-4 space-y-2 text-xs">
         <div><span className="text-gray-500 dark:text-gray-400">Scope:</span> <code>{authz.scope}</code></div>
         <div><span className="text-gray-500 dark:text-gray-400">Redirects back to:</span> <code className="break-all">{redirectHost}</code></div>
-        <div><span className="text-gray-500 dark:text-gray-400">Signed in as:</span> {session.user.email ?? session.user.name}</div>
+        <div className="flex items-center gap-2">
+          <span className="text-gray-500 dark:text-gray-400">Signed in as:</span>
+          <span>{session.user.email ?? session.user.name}</span>
+          <a href={switchUrl} className="text-blue-600 dark:text-blue-400 underline">Switch account</a>
+        </div>
       </section>
       <form action="/api/oauth/authorize/decide" method="POST" className="flex gap-3">
         <input type="hidden" name="t" value={t} />
