@@ -17,11 +17,21 @@ Forked from jrtipton/mayolo@minimal-core. Key architectural change: **S3/R2 repl
 
 ## Local dev
 
+There is no `.env.local` — always specify the environment file explicitly:
+
 ```bash
-npx dotenv-cli -e .env.local -- npm run dev
+npx dotenv-cli -e .env.local.main -- npm run dev
+npx dotenv-cli -e .env.local.staging -- npm run dev
+npx dotenv-cli -e .env.local.motherduck -- npm run dev
 ```
 
-Required `.env.local` vars:
+Available env files (never committed — see `.gitignore`):
+- `.env.local.main` — production (malloyyo.vercel.app)
+- `.env.local.staging` — staging instance
+- `.env.local.motherduck` — malloyyo-duck instance
+- `.env.local.guild` — guild instance
+
+Copy `.env.local.example` to get started. Required vars:
 - `DATABASE_URL` — Neon Postgres connection string
 - `MOTHERDUCK_TOKEN` — read-write personal token (NOT a read_scaling token)
 - `MOTHERDUCK_DATABASE` — must be an existing MotherDuck database (e.g. `mayolo`)
@@ -31,12 +41,12 @@ Required `.env.local` vars:
 
 DB schema push (first time or after schema changes):
 ```bash
-npx dotenv-cli -e .env.local -- npx drizzle-kit push
+npx dotenv-cli -e .env.local.main -- npx drizzle-kit push
 ```
 
 ## MotherDuck gotcha
 
-The lowercase `motherduck_token` shell env var must NOT be set — it overrides and conflicts. Unset it before running. The token in `.env.local` is `MOTHERDUCK_TOKEN` (uppercase).
+The lowercase `motherduck_token` shell env var must NOT be set — it overrides and conflicts. Unset it before running. The token in the env file is `MOTHERDUCK_TOKEN` (uppercase).
 
 ## Vercel deployment notes
 
