@@ -14,10 +14,20 @@ export class UnauthorizedError extends Error {
  * Returns the currently signed-in user, ensuring they have a slug.
  * Throws UnauthorizedError if no session exists.
  */
+function isEmailAllowed(email: string | null | undefined): boolean {
+  const allowList = process.env.EMAIL_ALLOW_LIST;
+  if (!allowList) return true;
+  const allowed = allowList.split(",").map((e) => e.trim().toLowerCase());
+  return allowed.includes((email ?? "").toLowerCase());
+}
+
 export async function getSessionUser(): Promise<User> {
   const session = await auth();
   if (!session?.user?.id) {
     throw new UnauthorizedError("not signed in");
+  }
+  if (!isEmailAllowed(session.user.email)) {
+    throw new UnauthorizedError("not authorized");
   }
   const [u] = await db
     .select()
